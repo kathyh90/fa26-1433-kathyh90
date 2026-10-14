@@ -31,5 +31,6 @@ venv/
 # files are small, redistributable, and free of sensitive information.
 data/raw/*
 !data/raw/README.md
+!data/raw/download_manifest.csv
 data/derived/*
 !data/derived/README.md
