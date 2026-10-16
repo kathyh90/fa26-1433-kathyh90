@@ -3,10 +3,10 @@
 Sources are grouped by state (LA, IL, NJ, ...) or national source (FSA, CCD).
 
 Usage (from the repository root):
-    python code/00_download_raw_data.py                 # all registered groups
-    python code/00_download_raw_data.py LA IL FSA       # selected groups
-    python code/00_download_raw_data.py NJ --force      # re-download existing files
-    python code/00_download_raw_data.py --dry-run       # list what would be fetched
+    uv run --locked python code/00_download_raw_data.py                 # all registered groups
+    uv run --locked python code/00_download_raw_data.py LA IL FSA       # selected groups
+    uv run --locked python code/00_download_raw_data.py NJ --force      # re-download existing files
+    uv run --locked python code/00_download_raw_data.py --dry-run       # list what would be fetched
 
 Files are saved to data/raw/<state>/<source_id>/<filename>, with national
 sources under data/raw/US/. Every download is
@@ -24,13 +24,11 @@ import hashlib
 import sys
 import urllib.error
 from datetime import datetime, timezone
-from pathlib import Path
 
+from config import RAW, ROOT
 from http_utils import CHUNK, RETRIES, open_url
 from sources import SOURCES
 
-ROOT = Path(__file__).resolve().parent.parent
-RAW = ROOT / "data" / "raw"
 MANIFEST = RAW / "download_manifest.csv"
 MANIFEST_FIELDS = [
     "state", "source_id", "year_label", "kind", "local_path", "url",

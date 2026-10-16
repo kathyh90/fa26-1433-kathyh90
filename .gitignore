@@ -34,3 +34,5 @@ data/raw/*
 !data/raw/download_manifest.csv
 data/derived/*
 !data/derived/README.md
+*.parquet
+*.duckdb
