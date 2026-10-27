@@ -26,6 +26,7 @@ Raw data are not in Git. Obtain them first:
 
 1. `uv run --locked python code/00_download_raw_data.py [GROUPS...]` downloads the files registered in `code/sources.py` (standard library only). Groups are states (`LA`, `IL`, `NJ`) saved to `data/raw/<state>/`, and national sources (`FSA` FAFSA completion archives, `CCD` NCES school files, `ACGR` EDFacts graduation rates via the Urban Institute, `EDGE` NCES school locations and locale codes) saved to `data/raw/US/`. All groups together are about 4.4 GB. Finished files are skipped on rerun, so an interrupted download can be resumed with the same command. Each file's URL, access time, and SHA-256 hash are recorded in `data/raw/download_manifest.csv`, which is tracked in Git.
    - Several CCD Membership zips use Deflate64 compression, which Python's `zipfile` cannot read; extract them with `unzip` or another tool that supports it.
+2. `bash run.sh` then builds the derived data: `code/01_clean_fsa.py` turns the FSA archives into `data/derived/fsa_fafsa_hs.parquet` (school × graduating class, classes of 2015 on).
 
 ## Repository structure
 

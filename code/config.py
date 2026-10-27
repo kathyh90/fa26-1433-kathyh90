@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-RAW = ROOT / "data" / "raw"
-DERIVED = ROOT / "data" / "derived"
-OUTPUT = ROOT / "output"
+ROOT = Path(__file__).resolve().parent.parent  # repository root (parent of code/)
+RAW = ROOT / "data" / "raw"           # unchanged source files; never edited by scripts
+DERIVED = ROOT / "data" / "derived"   # generated analysis tables (Parquet)
+OUTPUT = ROOT / "output"              # generated tables, figures, and checks

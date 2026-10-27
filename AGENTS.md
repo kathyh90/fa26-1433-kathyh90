@@ -1,6 +1,6 @@
 # AGENTS.md
 
-**Project:** TODO: one-line description of the research question.
+**Project:** How does a FAFSA graduation requirement affect FAFSA completion rates and college-going rates at the high school level for 15 states with implemented policies (Louisiana, Illinois, Alabama, Texas, Colorado, Maryland, California, Indiana, New Hampshire, Nebraska, Oklahoma, New York, New Jersey, Connecticut, and Pennsylvania)?
 
 ## Folder layout
 
@@ -22,6 +22,7 @@ tests/            pytest tests
 
 ## Rules
 
+- Read "docs/project-design.md" and "docs/state-data-requirements.md" for project context
 - Run everything from the repository root with `uv run --locked`.
 - Add packages only with `uv add PACKAGE`; never edit `uv.lock` by hand or use `pip install`.
 - Paths come from `code/config.py` (`ROOT`, `RAW`, `DERIVED`, `OUTPUT`). No absolute or machine-specific paths.
@@ -32,6 +33,7 @@ tests/            pytest tests
 - Never modify tests to make them pass. Fix the code, or explain why the test is wrong and ask.
 - Update `docs/codebook.md` whenever variables are added, removed, or redefined.
 - Record consequential decisions in `docs/DECISIONS.md`.
+- Write comments and function definitions for the code for user readability.
 
 ## Commands
 

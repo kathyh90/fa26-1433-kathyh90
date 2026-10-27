@@ -91,16 +91,21 @@ All LDOE links carry a `?sfvrsn=` version parameter, which is dropped; re-upload
 
 ### FAFSA completion by high school (`fsa_fafsa_completion`)
 - **URL:** https://studentaid.gov/data-center/student/application-volume/fafsa-completion-high-school. The page is a JavaScript app, so the file list is read from the same path with `.json` appended. The data-details and FAQ pages are also saved as JSON (`_data_details.json`, `_faq.json`).
-- **Downloaded:** 2026-10-09 21:29 to 23:31
+- **Downloaded:** 2026-10-09 21:29 to 23:31; December files re-downloaded 2026-10-27.
 - **Release:** monthly national "as of" snapshots, 2016-01-31 to 2026-09-30 (132 files).
   - Every file has Last-Modified 2026-10-08. That reflects the server re-stamping the files, not the release date, so the snapshot date in the label is the version that matters.
 - **Filters:**
-  - Every page link whose URL contains "ARCHIVE".
-  - Local filenames are built from the page's date label: `fafsa_hs_<YYYY-MM-DD>[_age18].<ext>`. The publisher's filename is kept in the manifest note.
+  - Every page link whose URL contains "ARCHIVE" and whose date label is December 31 (2016–2025), plus the newest June 30 file (currently 2026-06-30). Age-19 cutoff only; the "(18 year olds)" files are skipped.
+  - Following Deneault's `cleaningFAFSA_aejep.do`, a class's FCR numerator comes from the fixed prior-cycle "Through June" column of a later file rather than the preliminary June 30 snapshot.
+  - File-to-class mapping (checked from the header rows on 2026-10-27): the Dec 31 file of year Y+1 has prior-cycle columns "Through June Y" and "Through December Y", which are the class of Y. So Dec 2016 → class of 2015, ..., Dec 2025 → class of 2024. The June 30 2026 file has "Through June 2025" (class of 2025, fixed) and a current-cycle "Through June 30, 2026" column (class of 2026, preliminary). There is no Dec 2015 file; the archive starts in January 2016.
+  - The prior-cycle columns are revised slightly between files. Checked 2026-10-27 for the class of 2025, June 30 2026 vs. Sept 30 2026 file (29,505 schools matched on code, name, city, state): "Through June" completions differ for 147 schools (0.5%), mostly by +1 (range −8 to +8; 6 decreases). In five of the study states: AL 0/555, IL 2/885, IN 5/538, LA 0/474, TX 18/2,420. The Dec 31 file of year Y+1 is the last file carrying class Y's columns, so it holds the latest revision; this is a reason to prefer it. The class of 2025 should be refreshed from the Dec 31 2026 file once posted.
+  - The header's cycle labels (e.g. "2016/ 2017 Cycle" in the Dec 2016 file) don't line up cleanly with these classes; use the "Through June YYYY" dates to assign classes.
+  - History: on 2026-10-27 the download was first narrowed to June files and the other 120 monthly files (and `fafsa_hs_2017-06-30_age18.xls`) were deleted with their manifest rows; the December files were then re-downloaded and the June 30 2016–2025 files deleted with their manifest rows, the same day.
+  - Local filenames are built from the page's date label: `fafsa_hs_<YYYY-MM-DD>.<ext>`. The publisher's filename is kept in the manifest note.
   - Sometimes the filename date differs from the label (e.g., label "June 30, 2019", file `HS_ARCHIVE06282019.xls`).
   - The current per-state files (`LA.xls`, ...) are not downloaded because they are overwritten every two weeks.
 - **Methodology changes:**
-  - **Age cutoff:** the Apr–Jun 2017 files labeled "(18 year olds)" (saved as `_age18`) count applicants no older than 18. All other files use no older than 19.
+  - **Age cutoff:** the Apr–Jun 2017 files labeled "(18 year olds)" (previously saved as `_age18`; no longer downloaded) count applicants no older than 18. All other files use no older than 19.
   - **FAFSA opening date:** the FAFSA opened in January through the class of 2016 and on October 1 from the class of 2017 on. Earlier filing makes cumulative counts at a given date not comparable across that break.
   - **Matching:** from November 2022, files include a School Code (equal to the NCES school ID for public schools). Earlier files must be matched on school name and city. The NCES ID match was checked in the June 2023 file: IL 723, LA 334 and NJ 421 schools matched.
   - **Timing columns:** each file carries the prior cycle's fixed "Through June" and "Through December" columns.

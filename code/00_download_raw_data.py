@@ -29,6 +29,7 @@ from config import RAW, ROOT
 from http_utils import CHUNK, RETRIES, open_url
 from sources import SOURCES
 
+# One row per downloaded file, keyed by its repository-relative path.
 MANIFEST = RAW / "download_manifest.csv"
 MANIFEST_FIELDS = [
     "state", "source_id", "year_label", "kind", "local_path", "url",
@@ -37,6 +38,7 @@ MANIFEST_FIELDS = [
 
 
 def sha256(path):
+    """Return the SHA-256 hex digest of a file, read in CHUNK-sized blocks."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(CHUNK), b""):
@@ -53,9 +55,12 @@ def fetch(url, dest):
                 last_modified = r.headers.get("Last-Modified", "")
                 while block := r.read(CHUNK):
                     f.write(block)
+            # Only a complete download replaces dest, so a failure never
+            # leaves a truncated file behind.
             tmp.replace(dest)
             return last_modified
         except urllib.error.HTTPError:
+            # HTTP errors (404, 403, ...) won't fix themselves; don't retry.
             tmp.unlink(missing_ok=True)
             raise
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
@@ -66,6 +71,7 @@ def fetch(url, dest):
 
 
 def load_manifest():
+    """Read the download manifest into {local_path: row}; empty if none exists yet."""
     if not MANIFEST.exists():
         return {}
     with open(MANIFEST, newline="") as f:
@@ -73,6 +79,7 @@ def load_manifest():
 
 
 def save_manifest(rows):
+    """Write all manifest rows, sorted by local path so diffs stay stable."""
     with open(MANIFEST, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=MANIFEST_FIELDS)
         w.writeheader()
@@ -81,6 +88,10 @@ def save_manifest(rows):
 
 
 def main():
+    """Parse arguments, download each selected group's files, and update the manifest.
+
+    Exits with status 1 if any download (or file-list build) failed.
+    """
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("groups", nargs="*", default=sorted(SOURCES),
@@ -96,7 +107,7 @@ def main():
         parser.error(f"no sources registered for {unknown}; known: {sorted(SOURCES)}")
 
     manifest = load_manifest()
-    failures, changed = [], []
+    failures, changed = [], []  # (path, error) pairs; paths whose hash changed
 
     for group in (g.upper() for g in args.groups):
         # Some groups read their file list from the publisher's site.
@@ -137,10 +148,13 @@ def main():
                 failures.append((rel, str(e)))
                 continue
 
+            # Compare with the hash recorded last time to catch files the
+            # publisher replaced without changing the URL.
             digest = sha256(dest)
             status = "downloaded"
             if old_hash and old_hash != digest:
                 status = "changed"
+                # Snapshot pages change routinely; only flag data/doc files.
                 if src.kind != "page":
                     changed.append(rel)
             manifest[rel] = {

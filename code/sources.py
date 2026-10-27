@@ -114,12 +114,14 @@ def _library_files(page, pattern):
 
 
 def louisiana():
+    """Return LDOE college-enrollment files plus the scraped ACT, graduation-rate,
+    performance-score, TOPS, and October-count files, with landing-page snapshots."""
     sources = [Source("LA", "ldoe_college_enrollment", "_landing_page.html",
                       LA_PAGE, "", "page")]
     for year, name in LA_FILES:
         sources.append(Source(
             "LA", "ldoe_college_enrollment",
-            filename=name.replace("-(1)", ""),
+            filename=name.replace("-(1)", ""),  # drop the publisher's re-upload suffix
             url=LA_BASE + name,
             year_label=year,
             kind="data",
@@ -128,6 +130,7 @@ def louisiana():
         sources.append(Source("LA", source_id, "_landing_page.html",
                               LA_LIBRARY + page, "", "page"))
         for name, url in _library_files(page, pattern):
+            # Take the first year (or year range) in the filename as the label.
             year = re.search(r"(\d{4}(?:-\d{4})?)", name)
             sources.append(Source("LA", source_id, name, url,
                                   year[1] if year else "", "data", note=note))
@@ -184,6 +187,7 @@ IL_FILES = [
 
 
 def illinois():
+    """Return the ISBE Report Card data, layout, and glossary files listed in IL_FILES."""
     sources = [Source("IL", "isbe_report_card", "_landing_page.html",
                       IL_PAGE, "", "page")]
     for year, kind, url, name in IL_FILES:
@@ -206,6 +210,8 @@ NJ_YEARS = [f"{y}-{y + 1}" for y in range(2015, 2025)]  # 2015-2016 ... 2024-202
 
 
 def new_jersey():
+    """Return the NJDOE School Performance Report school-detail database, its layout
+    file, and its (optional) reference documents for each year in NJ_YEARS."""
     sources = [Source("NJ", "njdoe_spr", "_landing_page.html", NJ_PAGE, "", "page")]
     for year in NJ_YEARS:
         for name, kind in [("Database_SchoolDetail.xlsx", "data"),
@@ -234,6 +240,17 @@ def new_jersey():
 # (e.g. label "June 30, 2019", file HS_ARCHIVE06282019.xls).
 # Per the page: files labeled "(18 year olds)" (Apr-Jun 2017) use the earlier
 # age cutoff (no older than 18); all others use no older than 19.
+# Only the December 31 snapshots and the newest June 30 snapshot are
+# downloaded. Following Deneault's cleaningFAFSA_aejep.do, a class's FCR
+# numerator (completions through June) is taken from the fixed prior-cycle
+# "Through June" column of a later December file, not from the preliminary
+# June 30 snapshot; those files also carry the prior cycle's "Through December"
+# column. The Dec 31 file of year Y+1 holds the class of Y ("Through June Y"),
+# so Dec 2016 is the class of 2015. The newest June file covers the two classes
+# with no such December file yet: the previous class in its prior-cycle column
+# and the current class (preliminary). "(18 year olds)" files (Apr-Jun 2017) are skipped so every
+# file uses the age-19 cutoff. The filter is on the page's date label, not the
+# publisher filename, since the two sometimes disagree.
 # The current per-state files (LA.xls, ...) are overwritten every two weeks
 # and are not downloaded; the month-end archives are the stable record.
 # ---------------------------------------------------------------------------
@@ -262,10 +279,15 @@ def _anchors(node):
 
 
 def fsa_fafsa_completion():
+    """Return the FSA documentation pages, each December 31 FAFSA-completion-by-
+    high-school archive, and the newest June 30 archive (all age-19 cutoff), read
+    from the landing page's JSON."""
     sources = [Source("US", "fsa_fafsa_completion", name, url, "", "page")
                for name, url in FSA_DOCS.items()]
+    archives = []  # (month, date, label, href) for every age-19 archive
     for a in _anchors(get_json(FSA_DOCS["_landing_page.json"])):
         href, label = a.get("href") or "", a.get("value") or ""
+        # Archive links are the only anchors with "ARCHIVE" in the URL.
         if "ARCHIVE" not in href.upper():
             continue
         # Labels look like "June 30, 2017" or "June 30, 2017 (18 year olds)";
@@ -273,13 +295,21 @@ def fsa_fafsa_completion():
         m = re.match(r"([A-Za-z]{3})[a-z]*\.? (\d{1,2}), (\d{4})", label)
         if not m:
             raise ValueError(f"unrecognized FSA archive label: {label!r} ({href})")
-        date = f"{m[3]}-{MONTHS[m[1].lower()]:02d}-{int(m[2]):02d}"
-        suffix = "_age18" if "18 year" in label else ""
+        if "18 year" in label:
+            continue
+        month = m[1].lower()
+        archives.append((month, f"{m[3]}-{MONTHS[month]:02d}-{int(m[2]):02d}", label, href))
+
+    # ISO dates sort chronologically, so max() is the newest June file.
+    newest_june = max(date for month, date, _, _ in archives if month == "jun")
+    for month, date, label, href in sorted(archives, key=lambda a: a[1]):
+        if month != "dec" and date != newest_june:
+            continue
         ext = href.rsplit(".", 1)[-1].lower()
         sources.append(Source(
             "US", "fsa_fafsa_completion",
-            filename=f"fafsa_hs_{date}{suffix}.{ext}",
-            url=FSA_ROOT + href.replace(" ", "%20"),
+            filename=f"fafsa_hs_{date}.{ext}",
+            url=FSA_ROOT + href.replace(" ", "%20"),  # some filenames contain spaces
             year_label=date,
             kind="data",
             note=f"label: {label}; publisher file: {href.rsplit('/', 1)[-1]}",
@@ -306,6 +336,8 @@ CCD_FIRST_YEAR = 2011
 
 
 def ccd_school():
+    """Return the current-version CCD school-level nonfiscal data and documentation
+    files for each school year from CCD_FIRST_YEAR on, read from the NCES file API."""
     sources = [Source("US", "nces_ccd_school", "_file_list.json", CCD_API, "", "page")]
     for year in get_json(CCD_API)["selectionGroupModels"]:
         # One undated entry links to the EDGE website rather than a file.
@@ -317,6 +349,7 @@ def ccd_school():
         label = f"{start}-{start + 1}"
         for title in year["titleGroups"]:
             for element in title["elementGroups"]:
+                # versionOrder 0 is the current release; others are superseded.
                 if element["versionOrder"] != 0:
                     continue
                 kind = {"Data File": "data", "Documentation": "docs"}.get(element["elementType"])
@@ -359,6 +392,7 @@ ACGR_YEARS = range(2010, 2020)
 
 
 def acgr_school():
+    """Return Urban Institute's yearly school-level EDFacts graduation-rate CSVs."""
     sources = [Source("US", "edfacts_acgr_urban", "_endpoints.json",
                       "https://educationdata.urban.org/api/v1/api-endpoints/", "", "page")]
     for y in ACGR_YEARS:
@@ -385,6 +419,8 @@ EDGE_DATA = "https://nces.ed.gov/programs/edge/data/"
 
 
 def edge_school_locations():
+    """Return the EDGE public school location files (2014-15 from CCD, 2015-16 on
+    scraped from the landing page) and the technical documentation."""
     sources = [
         Source("US", "nces_edge_locations", "_landing_page.html", EDGE_PAGE, "", "page"),
         Source("US", "nces_edge_locations", "EDGE_GEOCODE_PUBLIC_TECHDOC.pdf",
@@ -396,6 +432,7 @@ def edge_school_locations():
                "https://nces.ed.gov/ccd/data/zip/2017010_EDGE_GEOIDS_201415_160913_Documentation.zip",
                "2014-2015", "docs"),
     ]
+    # Map each two-year code (e.g. "1516") to the link's path prefix.
     links = {yy: prefix for prefix, yy in
              re.findall(r'href="([^"]*?)EDGE_GEOCODE_PUBLICSCH_(\d{4})\.zip"', get_text(EDGE_PAGE))}
     for yy, prefix in sorted(links.items()):
@@ -408,6 +445,7 @@ def edge_school_locations():
     return sources
 
 
+# Download groups: command-line name -> function returning that group's Sources.
 SOURCES = {
     "LA": louisiana,
     "IL": illinois,
