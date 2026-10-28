@@ -147,6 +147,14 @@ All LDOE links carry a `?sfvrsn=` version parameter, which is dropped; re-upload
 - **Year mapping:** Urban year Y is the graduating class of Y+1. Urban 2017 and 2018 matched LDOE's class-of-2018 and class-of-2019 school rates for 100% of about 230 linked Louisiana schools, versus about 35% for the adjacent class (checked 2026-10-09).
 - **Caveat:** rates are reported as ranges for privacy (`grad_rate_low`, `grad_rate_high`, `grad_rate_midpt`).
 
+### NCES Private School Universe Survey (`nces_pss`)
+- **URL:** https://nces.ed.gov/surveys/pss/pssdata.asp
+- **Downloaded:** 2026-10-27, by `code/00_download_raw_data.py PSS`.
+- **Release:** biennial public-use files, one row per private school: 2013-14, 2015-16, 2017-18, 2019-20, 2021-22, 2023-24 (CSV zip and codebook PDF for each).
+- **Filters:** CSV releases only (earlier waves are SAS/SPSS only). The "Frame Data" CSVs for 2017-18 on are sampling frames, not survey files, and are not downloaded.
+- **Use:** links pre-2021 FSA records of private schools to FSA's codes. `PPIN` is the 8-character code FSA uses for private schools from the class of 2021 on (4,162 of FSA's 5,981 distinct 8-character codes appear in the 2019-20 wave alone).
+- **Caveats:** column names are lowercase in 2015-16 and uppercase otherwise. Highest grade is `HIGRyyyy` (yyyy = spring year), a recode: 1 = all ungraded, 2 = prekindergarten, ..., 17 = grade 12.
+
 ### NCES EDGE public school locations and locale codes (`nces_edge_locations`)
 - **URL:** landing page https://nces.ed.gov/programs/edge/Geographic/SchoolLocations
   - Yearly files: `https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_<yyyy>.zip`

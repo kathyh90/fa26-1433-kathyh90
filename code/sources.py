@@ -445,6 +445,36 @@ def edge_school_locations():
     return sources
 
 
+# ---------------------------------------------------------------------------
+# PSS: NCES Private School Universe Survey, public-use files (national)
+# Landing page: https://nces.ed.gov/surveys/pss/pssdata.asp
+# Biennial; one row per private school with its PSS ID (PPIN), name, city,
+# state, and grade span. FSA's 8-character School Codes for private schools
+# (from the class of 2021 on) are PSS IDs, so these files link pre-2021 FSA
+# private-school records the way CCD links public ones. CSV releases start
+# with 2013-14, which also covers the class of 2015's senior year. The
+# 2017-18 to 2023-24 "Frame Data" CSVs listed on the page are sampling frames,
+# not the survey files, and are not downloaded.
+# ---------------------------------------------------------------------------
+
+PSS_PAGE = "https://nces.ed.gov/surveys/pss/pssdata.asp"
+PSS_BASE = "https://nces.ed.gov/surveys/pss/"
+PSS_YEARS = [2013, 2015, 2017, 2019, 2021, 2023]  # first year of each wave
+
+
+def pss_private_schools():
+    """Return each PSS wave's public-use CSV zip and codebook, plus a page snapshot."""
+    sources = [Source("US", "nces_pss", "_landing_page.html", PSS_PAGE, "", "page")]
+    for y in PSS_YEARS:
+        label = f"{y}-{y + 1}"
+        yy = f"{y % 100:02d}{(y + 1) % 100:02d}"
+        sources.append(Source("US", "nces_pss", f"pss{yy}_pu_csv.zip",
+                              f"{PSS_BASE}zip/pss{yy}_pu_csv.zip", label, "data"))
+        sources.append(Source("US", "nces_pss", f"codebook{y}_{(y + 1) % 100:02d}.pdf",
+                              f"{PSS_BASE}pdf/codebook{y}_{(y + 1) % 100:02d}.pdf", label, "docs"))
+    return sources
+
+
 # Download groups: command-line name -> function returning that group's Sources.
 SOURCES = {
     "LA": louisiana,
@@ -454,4 +484,5 @@ SOURCES = {
     "CCD": ccd_school,
     "ACGR": acgr_school,
     "EDGE": edge_school_locations,
+    "PSS": pss_private_schools,
 }
