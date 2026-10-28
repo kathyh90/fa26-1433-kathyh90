@@ -52,6 +52,142 @@ Normalization: uppercase; "&" → AND; punctuation removed; whole-word abbreviat
 
 Known patterns (checked 2026-10-27): one code can cover several records in a class. These are multi-site or virtual schools listed once per city, or the same school listed twice in one file under two spellings (e.g. ST LOUIS / SAINT LOUIS). Counts for such records should be summed when collapsing to the code. Some schools' NCES IDs change over time (e.g. Granada Hills Charter, CA: 062271003050 in 2018, 060220603050 from 2021, apparently when it became its own district), so a code is not yet a stable school identifier across years. FSA's 2021+ codes describe schools as they are now, so an old name can carry another school's code; the year check (`ccd_relinked`, `ambiguous_resolved`) corrects this using each year's directory (e.g. Dothan High School, AL: 010123000445 through the class of 2019; after the 2019 merger with Northview the name uses Northview's ID 010123001501). About 1.4% of `ambiguous_resolved` links use a code whose name that year differs from FSA's, mostly renamed schools (e.g. Frederick A. Douglass HS = KIPP Renaissance, New Orleans). Fuzzy links (`ccd_fuzzy`, `pss_fuzzy`) are the least certain; in the study states they cover 0.09% and 0.03% of 2015–2020 completions.
 
+## `fsa_school_panel.parquet`
+
+- **Produced by:** `code/03_build_fsa_school_panel.py`
+- **Unit of observation:** school × graduating class in the 15 study states (LA, IL, AL, TX, CO, MD, CA, IN, NH, NE, OK, NY, NJ, CT, PA), all sectors, classes 2015–2026.
+- **Key (unique):** `school_id`, `class_year`
+- **Built from:** `fsa_fafsa_hs.parquet` records with a code in `fsa_school_codes.parquet`, summed by school and class. Records in other states are left out here (the earlier FSA files keep every state). In the study states, records without a code are left out (2,111 records, 29,423 of 13.5 million completions: unlinked, ambiguous, rejected, and 30 network-level records). Unlinked second listings of a linked school (same class, city, candidate code, and matching name) are added to that school; network-level records (names ending in SCHOOLS or containing NETWORK) are not.
+
+| Variable | Type | Units | Definition | Source | Missing-value codes |
+|---|---|---|---|---|---|
+| `school_id` | string | — | Stable school identifier: the most recent NCES ID for public schools (IDs in one state sharing NCES's 5-digit school number, never open in CCD in the same year, with matching names, are one school); the PSS ID for private schools; FSA's code otherwise | derived from FSA codes and CCD directories | — |
+| `class_year` | int | year | Graduating class | `fsa_fafsa_hs.parquet` | — |
+| `state`, `name`, `city` | string | — | From the school's largest FSA record that class | FSA | `city` null for some territory records |
+| `sector` | string | — | `public` (12-character NCES ID), `private` (PSS ID), `no_nces_id` (FSA "FN" code) | derived | — |
+| `submitted_jun`, `completed_jun`, `submitted_dec`, `completed_dec` | Int64 | applications | Sum over the school's records of the published counts (see `fsa_fafsa_hs.parquet`) | FSA | Null if every component is "<5" (or the column does not exist, e.g. December counts for a preliminary class) |
+| `*_lt5` | bool | — | True if any component record's count was "<5". With one record the count is then null; with several, the sum is a lower bound | derived | — |
+| `n_records` | int | records | FSA records summed into the row | derived | — |
+| `codes` | string | — | Distinct linked codes of those records, joined by `|` | `fsa_school_codes.parquet` | — |
+| `assign_rules` | string | — | Distinct `link_tier` values of those records, plus `duplicate_listing` for added second listings, joined by `|` | derived | — |
+| `kind`, `snapshot_date`, `source_file` | — | — | As in `fsa_fafsa_hs.parquet` (from the largest record) | FSA | — |
+
+Known gaps: a record whose name, once generic words and its own city are set aside, has no words left cannot be fuzzy-matched (e.g. GRANADA HILLS CHARTER HIGH SCHOOL, Granada Hills, class of 2019, is missing). Some multi-site charters (e.g. Inspire, Options for Youth in CA) are one `school_id` because CCD chains their IDs.
+
+## Policy inputs: `data/policy/state_mandates.csv` and `data/policy/co_grantee_schools.csv`
+
+Hand-entered from statutes and agency reports (sources in each row and in `docs/source-notes.md`); tracked in Git. Read by `code/04_policy_timing.py`.
+
+`state_mandates.csv`, one row per study state:
+
+| Variable | Definition |
+|---|---|
+| `state` | Two-letter code |
+| `effective_school_year` | School year the policy took effect, as written in the source |
+| `first_covered_class` | First graduating class covered (e = 0). Colorado: earliest grantee school (2023); school-level classes are in `co_grantee_schools.csv` |
+| `partial_rollout_class` | A class only partly covered; excluded from the dose window and reference class |
+| `last_covered_class` | Last covered class if the policy was repealed or sunsets (LA 2024, NH 2024, NJ 2027); blank if ongoing |
+| `policy_type` | `graduation_requirement`, `lea_requirement` (CA, NY), `lea_support_duty` (MD), `grant_schools_only` (CO), `completion_requirement` (PA: required but graduation not affected) |
+| `requirement_on` | Who the requirement binds (students, LEAs, grantee schools) |
+| `graduation_consequence` | `diploma_withheld` or `none` |
+| `adoption` | `statutory` or `regulatory` |
+| `opt_out`, `waiver_by` | Whether an opt-out exists and who may sign or grant it |
+| `alternative_application` | Application accepted in place of the FAFSA (e.g. TASFA, CADAA, TOPS online application) |
+| `citation`, `source`, `notes` | Legal citation, source document and page, notes |
+
+`co_grantee_schools.csv`, one row per Colorado Fund My Future grantee high school (11): `grantee`, `school_name`, `nces_id` (12-digit NCES ID, matching `school_id` in `fsa_school_panel.parquet`), `program_launch`, `first_covered_class`, `partial_rollout_class` (Westminster's two schools: program launched spring 2023, so 2023 is partial and 2024 is the first covered class), `source`, `notes`.
+
+## `policy_timing.parquet`
+
+- **Produced by:** `code/04_policy_timing.py`
+- **Unit of observation:** treatment unit: one row per study state, except Colorado, which has one row per grantee school (25 rows).
+- **Key (unique):** `state`, `school_id` (`school_id` missing for statewide rows)
+
+| Variable | Type | Definition |
+|---|---|---|
+| `state`, `school_id`, `policy_type`, `first_covered_class`, `partial_rollout_class`, `last_covered_class` | — | From the policy inputs |
+| `reference_class` | int | e = −1: last class before `first_covered_class` that is not a partial-rollout class |
+| `dose_class_1`, `dose_class_2` | int | The two classes before `reference_class` (skipping partial-rollout classes); the dose is 1 − average FCR over them |
+| `post_first`, `post_last`, `n_post_classes` | Int64/int | Post-mandate classes with FSA data: e = 0 through the earlier of `last_covered_class` and the newest FSA class (missing / 0 if none yet) |
+| `post_includes_preliminary` | bool | Post classes include FSA's preliminary (newest) class |
+| `dose_in_fsa` | bool | Both dose classes are within the FSA data (class of 2015 on) |
+| `dose_or_reference_covid` | bool | Dose or reference class is 2020 or 2021 |
+| `dose_or_reference_2024` | bool | Dose or reference class is 2024 (delayed 2024-25 FAFSA) |
+| `dose_or_reference_preliminary` | bool | Dose or reference class is FSA's preliminary class (CT, PA: reference 2026) |
+| `post_includes_2024` | bool | Post classes include 2024 |
+
+## `ccd_school_panel.parquet`
+
+- **Produced by:** `code/05_build_ccd_school_panel.py`
+- **Unit of observation:** public school × school year, 15 study states, school years 2014-15 to 2024-25. Only schools open that year (CCD statuses Open, New, Added, Changed Boundary/Agency, Reopened); closed, inactive, and future schools are dropped (856–1,300 per year).
+- **Key (unique):** `school_id`, `class_year`
+- **Sources:** CCD school files 029 (Directory), 129 (School Characteristics), 052 (Membership), 033 (Lunch), 059 (Staff); NCES EDGE school locale. CCD negative codes (−1 missing, −2 not applicable, −9 suppressed, ...) are missing.
+
+| Variable | Type | Units | Definition | Source | Missing-value codes |
+|---|---|---|---|---|---|
+| `school_id` | string | — | Stable school ID (most recent NCES ID; `code/school_ids.py`); matches `fsa_school_panel.parquet` | derived | — |
+| `nces_id` | string | — | NCES ID that year | 029 `NCESSCH` | — |
+| `class_year` | int | year | Spring year of the school year (2014-15 → 2015); grade-12 counts are that graduating class's seniors | derived | — |
+| `state`, `name`, `lea_id`, `lea_name`, `city` | string | — | State, school name, district ID and name, physical city | 029 | — |
+| `school_type` | string | — | CCD school type as published | 029 `SCH_TYPE_TEXT` | — |
+| `school_type_std` | string | — | `regular`, `special_education`, `career_technical`, `alternative` (CCD renamed types in 2016-17) | derived | — |
+| `charter` | bool | — | Charter school | 029 `CHARTER_TEXT` | Null if not applicable/missing |
+| `virtual` | string | — | Virtual status as published (Yes/No through 2015-16; categories such as "Full virtual" later) | 029 `VIRTUAL` (2014-15, 2015-16); 129 `VIRTUAL_TEXT` (2016-17 on) | — |
+| `level`, `gslo`, `gshi` | string | — | School level; lowest and highest grade offered | 029 | — |
+| `n_grades` | Int64 | grades | Grades offered from `gslo` to `gshi`, PK and KG counted | derived | Null if a grade code is missing/ungraded |
+| `title_i`, `nslp_status` | string | — | Title I status; National School Lunch Program status (incl. CEP) | 129 | `title_i` null from 2022-23 (no longer published) |
+| `locale` | string | — | Urban-centric locale code (11–43) | EDGE (`LOCALE`; `LOCALE15` in 2015-16) | — |
+| `enroll_total` | Int64 | students | Total enrollment | 052 (`TOTAL`/`MEMBER`; long files: Education Unit Total) | — |
+| `enroll_g12` | Int64 | students | Grade-12 enrollment (fall count); the fallback FCR denominator where state graduate counts are missing | 052 | — |
+| `enroll_g09`–`enroll_g11` | Int64 | students | Enrollment in grades 9–11 (fall count). Grade 9 lagged three years is a class's 9th-grade cohort (Deneault's school screen); grades 10–11 help check class sizes over time. Not denominators. | 052 | — |
+| `race_american_indian`, `race_asian`, `race_hispanic`, `race_black`, `race_white`, `race_pacific_islander`, `race_two_or_more` | Int64 | students | Enrollment by race/ethnicity (long files: subtotal by race and sex minus adult education, summed over sex) | 052 | — |
+| `frl_free`, `frl_reduced`, `frl_total` | Int64 | students | Free-lunch, reduced-price-lunch, and total FRL-eligible students | 033 | ~4% missing |
+| `direct_cert` | Int64 | students | Directly certified students | 033 (2016-17 on) | Null before 2016-17 and where not reported (~73% of high-school rows) |
+| `teachers_fte` | Float64 | FTE | Full-time-equivalent teachers | 059 (`FTE`; long files: `TEACHERS`) | ~5% missing |
+
+Known breaks: Illinois's alternative and special-education schools stop reporting grade-12 students in 2020-21 (about 100 schools), and Connecticut stops listing about 150 alternative and special-education programs in 2016-17/2017-18; regular high schools are unaffected. Locale for 2014-15 comes from the 2014-15 EDGE geocode file listed under CCD.
+
+## `analysis_panel.parquet`
+
+- **Produced by:** `code/06_build_analysis_panel.py`
+- **Unit of observation:** public school × graduating class in the 15 study states (FSA public rows joined to CCD and policy timing). No rows are dropped; sample screens are `f_*` columns.
+- **Key (unique):** `school_id`, `class_year`
+- **Follows:** Deneault (2023), `mergedata_aejep.do` and `main_aejep.do`.
+
+Main variables (all FSA, CCD, and policy-timing columns are also carried):
+
+| Variable | Type | Definition |
+|---|---|---|
+| `denominator`, `denominator_source` | Float64, string | Seniors: CCD grade-12 enrollment (`ccd_grade12`); to be replaced by state graduate counts where available. Missing for the class of 2026 (CCD 2025-26 membership not released) |
+| `fcr`, `fcr_capped` | Float64, bool | `completed_jun / denominator`, capped at 1 (as Deneault); flag if the cap bound. Missing when completions are "<5" (as Deneault) or the denominator is missing/0 |
+| `treated` | bool | Unit has policy timing (every school in 14 states; Colorado grantee schools only) |
+| `e` | Int64 | Event time: `class_year − first_covered_class` |
+| `post` | bool | Class covered: from `first_covered_class` through `last_covered_class` |
+| `partial_rollout`, `after_repeal` | bool | Class is the unit's partial-rollout class; class is after the last covered class |
+| `pre_fcr`, `dose` | Float64 | Mean `fcr` over the two dose classes (both required); `dose = 1 − pre_fcr` |
+| `weight` | Float64 | Mean over pre-mandate classes of `enroll_total / n_grades` (Deneault's weight) |
+| `cohort9` | Int64 | The class's 9th-grade cohort: grade-9 enrollment three years earlier (from the class of 2018 on, since CCD starts in 2014-15) |
+| `student_teacher_ratio` | Float64 | `enroll_total / teachers_fte` |
+| `share_white`, `share_black`, `share_hispanic`, `share_asian`, `share_frl` | Float64 | Shares of total enrollment (FRL capped at 1) |
+| `enroll_total_sq` | Float64 | Total enrollment squared (Deneault control) |
+| `in_window` | bool | Class is in the estimation window: e = −4 … +1 (to 0 if only one post class), limited to classes with a denominator (2015–2025) and covered classes, excluding a partial-rollout class |
+| `window_classes_needed` | int | Number of window classes the school should have |
+| `f_in_ccd` | bool | School is in CCD in some year |
+| `f_not_special_ed` | bool | Never a special-education school (Deneault's screen) |
+| `f_regular` | bool | Always a regular school (project design: drops special-ed, career/technical, alternative) |
+| `f_not_virtual` | bool | Never fully or primarily virtual |
+| `f_cohort9_positive` | bool | No class with a 9th-grade cohort of 0 (Deneault; only cohorts from 2018 on are observed) |
+| `f_ratio_ok` | bool | Student/teacher ratio never below 5 and not above 100 in every year (Deneault) |
+| `f_dose_ok` | bool | Both dose classes have `fcr` |
+| `f_balanced` | bool | `fcr` observed in every window class |
+
+Deneault's controls also include school ACT, which is not yet in the data.
+
+## Output tables (`output/tables/`)
+
+- `sample_screens_by_state.csv` (from `code/06_build_analysis_panel.py`): treated public schools with post-mandate classes in each state, and how many remain after each screen in design order (cumulative), plus the number passing Deneault's screens.
+- `first_stage_by_state.csv` (from `code/07_first_stage.py`): one row per state and specification (`main`, `no_frl`, `deneault` for Louisiana), `controls` (`with_frl` or `no_frl`; Illinois's main uses `no_frl`): `beta` (coefficient on dose × post), `se` (clustered by school), `p`, `n_obs`, `n_schools`, `classes` (window), `mean_fcr_pre` (weighted mean completion rate before the mandate), `mean_dose`.
+
 ## `<dataset>.parquet`
 
 - **Produced by:** `code/<script>.py`

@@ -2,6 +2,11 @@
 
 Replace this text with a one-sentence description of the research question.
 
+## Project Context
+Here is a Google document link to my outline, which is constantly being revised: https://docs.google.com/document/d/1dhS8TVZodqTQsj7gL6OkA8KXnRc9jgbaPBSRS1I5YiI/edit?usp=sharing
+
+- It is on viewer mode, but if there ends up being edit access, do not edit it.
+
 ## Setup
 
 The project uses [uv](https://docs.astral.sh/uv/) for Python. Dependencies are listed in `pyproject.toml`, exact versions are locked in `uv.lock`, and the Python version is pinned in `.python-version`. Install uv (for example `brew install uv`), then from the repository root run:

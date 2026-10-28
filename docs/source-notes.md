@@ -168,6 +168,16 @@ All LDOE links carry a `?sfvrsn=` version parameter, which is dropped; re-upload
   - The 2014-15 file is listed under CCD rather than on this page, so it is added by hand.
 - **Used for:** rural versus urban heterogeneity (urban-centric locale code). For 2011-12 to 2013-14, use `ULOCAL` from the CCD files.
 
+## Policy sources (`data/policy/`)
+
+Entered by hand; each row cites its source.
+
+- **EdTrust (2025), *A Scan of State Universal FAFSA Policies*** (Feb 2025): https://edtrust.org/wp-content/uploads/2025/02/Universal-FAFSA-Report-V4.pdf. Summary table (p. 9), opt-out wording (pp. 10–11), alternative applications (p. 13), state "Fast Facts" with each state's implementation class (pp. 15–38), statute citations (notes 20–37). Covers 14 states; not Pennsylvania. Its Colorado class of 2022 conflicts with CDHE (below).
+- **User's state audit** (`docs/state_sources_audit.pdf`): EdTrust's summary table plus Pennsylvania, a timing table (first class, dose, reference, post), and state data sources.
+- **Louisiana repeal:** NCAN, https://ncan.org/Web/News/Louisiana_Board_Rescinds_States_Universal_FAFSA_Policy.aspx; Louisiana Illuminator, 2024-03-06. BESE voted in March 2024 to remove the requirement starting with the class of 2025. The Bulletin 741 section is still to be checked.
+- **Pennsylvania:** PDE, https://www.pa.gov/agencies/education/resources/student/empoweru/resources-for-institutions/campaigns/pa-fafsa-go/pa-fafsa-requirement (accessed 2026-10-27). Act 47 of 2025, 24 P.S. § 16-1617; classes of 2027 on; FAFSA or opt-out form required but graduation not affected; covers public, charter, cyber charter, CTC, and nonpublic schools.
+- **Colorado Fund My Future (HB21-1330):** CDHE page https://cdhe.colorado.gov/fund-my-future (its text says "6 proposals" but lists 7 grantees) and CDHE-COSI Fund My Future annual reports 2021-22 to 2024-25 (https://highered.colorado.gov/publications/Reports/Legislative/1330/). The reports give the 11 high schools served and each grantee's program launch (fall 2022, spring 2023, fall 2023). Harrison High School appears in the 2024-25 report's list but not the 2023-24 one. NCES IDs were looked up in the CCD 2022-23 and 2024-25 directories (Colorado High School Charter's Osage campus by its address, 1175 Osage St).
+
 ## Replication package
 
 ### Deneault (2023), openICPSR project 161021 V1

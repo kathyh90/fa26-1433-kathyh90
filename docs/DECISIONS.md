@@ -2,6 +2,38 @@
 
 Record consequential choices about data, samples, variables, and methods. Newest first.
 
+## 2026-10-27: First-stage sample, controls, and specification
+
+- **Decision:** (user decisions 2026-10-27) Main sample: treated public schools with post-mandate classes, in the estimation window (e = −4 … +1, or to e = 0 with one post class; for the 2025 states the window ends at 2025 because CCD grade-12 counts for 2026 are not yet released), passing the project-design screens (always a regular school, never fully/primarily virtual, Deneault's 9th-grade cohort and student/teacher-ratio screens, both dose classes observed, balanced over the window), with complete controls in every window class. Louisiana is also run with Deneault's screens (special education dropped instead of the regular-school screen) for comparison with her estimate. "<5" completions are missing (as Deneault); the completion rate is capped at 1 (as Deneault). Controls: shares white, Black, Hispanic, Asian; total enrollment and its square; free/reduced-lunch share (added to Deneault's controls; a version without it is also reported). Deneault's school ACT control is not yet available. Colorado is left out (`EXCLUDE_STATES` in `code/07_first_stage.py`) until its covered-vs-uncovered design is decided. Model: `fcr ~ dose × post + controls | school + class`, weighted by Deneault's weight, standard errors clustered by school (CRV1, pyfixest).
+- **Alternatives considered:** Deneault's screens everywhere (keeps more alternative schools in CA and TX); imputing "<5" (kept as a later sensitivity check); no cap.
+- **Reason:** Follow Deneault's specification as closely as the data allow, with the project design's stricter school screens.
+- **Affects:** All first-stage estimates (`output/tables/first_stage_by_state.csv`). Estimates are preliminary: CCD grade-12 enrollment is the denominator until state graduate counts are added. Illinois reported no FRL to CCD for 2020-21 (its first covered class), so Illinois's main specification omits the FRL share (`NO_FRL_STATES`; user decision 2026-10-27). To revisit: add FRL from the Illinois Report Card when state data are added (step 4) and restore Illinois's FRL control.
+- **Related issue:**
+
+## 2026-10-27: CCD school panel
+
+- **Decision:** `code/05_build_ccd_school_panel.py` builds one row per open public school and school year (2014-15 to 2024-25) in the 15 study states from CCD Directory, School Characteristics, Membership, Lunch, and Staff files plus EDGE locale, keyed by the same `school_id` as the FSA panel (ID-chaining code moved to `code/school_ids.py`). Files are streamed with the system `unzip -p` because several Membership zips use Deflate64; the two nested Membership zips (2017-18, 2021-22) are copied to a temporary directory that is deleted afterwards. `data/raw/` is never changed. Closed, inactive, and future schools are dropped each year (they would otherwise duplicate a school whose ID just changed). No sample restrictions beyond that; school-type screens come later.
+- **Alternatives considered:** Extracting the zips into `data/raw/` (rejected: raw files must stay unchanged); a Python Deflate64 package (unnecessary given `unzip`).
+- **Reason:** Provides the grade-12 fallback denominator, Deneault's weight inputs (enrollment, grades offered), sample screens (school type, charter, virtual), and controls (race, FRL, teachers, locale) for every study state.
+- **Affects:** Analysis panel and first stage. Direct certification exists only from 2016-17 and is often unreported; Title I is not published from 2022-23.
+- **Related issue:**
+
+## 2026-10-27: Policy timing table
+
+- **Decision:** Policy dates are entered by hand in `data/policy/state_mandates.csv` (from the user's state audit, EdTrust's Feb 2025 scan of universal FAFSA policies, statutes, and PDE for Pennsylvania) and `data/policy/co_grantee_schools.csv` (CDHE Fund My Future reports). `code/04_policy_timing.py` derives each unit's reference class (e = −1) and dose window (e = −3, −2), skipping partial-rollout classes, and its post classes. Louisiana's last covered class is 2024 (BESE repealed the requirement in March 2024 starting with the class of 2025). Colorado is treated school by school: 11 grantee high schools, first covered class 2023 (fall 2022 launch) or 2024 (fall 2023 launch); Westminster's two schools launched in spring 2023, so 2023 is a partial-rollout class and 2024 their first covered class.
+- **Alternatives considered:** Colorado first covered class 2022 (EdTrust; rejected because CDHE reports no grantee program before fall 2022); treating Westminster's class of 2023 as covered (kept as a sensitivity check).
+- **Reason:** Derived timing must be reproducible from documented inputs, and match the design's rule (dose e = −3, −2; reference e = −1; partial-rollout classes excluded).
+- **Affects:** Dose, reference, and post classes in every state. Flags: the COVID classes fall in the dose or reference window for IL, AL, TX, MD, CA, IN, NH, and all Colorado schools; the class of 2024 is the reference class for NE, OK, NY, NJ and a dose class for CT and PA; CT and PA's reference class (2026) is FSA's preliminary class. Colorado's design differs from the others (covered vs. uncovered schools rather than dose within all-covered schools) and needs its own decision before estimation. CHSC GES and Aspire Online first appear in FSA in 2023, so they have no dose classes.
+- **Related issue:**
+
+## 2026-10-27: School-level FSA panel and stable school IDs
+
+- **Decision:** `code/03_build_fsa_school_panel.py` sums FSA records by a stable `school_id` and class. Public schools whose NCES ID changed (new district) are joined when the IDs share state and 5-digit NCES school number, are never open in CCD in the same year, and any of their CCD names match; `school_id` is the newest ID. Unlinked second listings of a school (same class, city, candidate code, matching name) are added to it; network-level records are not. A "<5" cell adds nothing to a sum and sets a flag. Only the 15 study states are kept (user decision, 2026-10-27); `fsa_fafsa_hs.parquet` and `fsa_school_codes.parquet` still cover every state, so never-adopting comparison states (for the planned triple difference and placebo runs) can be added back by changing `STUDY_STATES` in the script. All sectors are kept.
+- **Alternatives considered:** Using NCES IDs as they are (splits schools like Granada Hills Charter, CA, and KIPP Renaissance / Frederick A. Douglass, LA, across IDs); using CCD's state school ID (its format changes in 2016-17); dropping private/charter schools here (deferred to the analysis panel, where CCD and PSS identify them).
+- **Reason:** The first stage needs one continuous series per school across the dose, reference, and post classes. 514 FSA codes are joined to a newer ID of the same school.
+- **Affects:** All school-level analysis. Comparing every name an ID has had (not just its latest) was needed to join renamed schools.
+- **Related issue:**
+
 ## 2026-10-27: Link pre-2021 FSA records to FSA's own School Codes before using CCD
 
 - **Decision:** `code/02_link_fsa_codes.py` gives each FSA record from the classes of 2015–2020 the School Code that FSA attaches to the same school from 2021 on. Matching runs in tiers: exact state+name+city, then normalized name+city, then normalized name within the state. A name-only link is rejected when its code is already taken in that class by a better link or is contested. Keys that lead to several codes are not linked. The CCD directory is used only for records still unlinked.
