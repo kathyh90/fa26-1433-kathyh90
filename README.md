@@ -3,9 +3,9 @@
 Replace this text with a one-sentence description of the research question.
 
 ## Project Context
-Here is a Google document link to my outline, which is constantly being revised: https://docs.google.com/document/d/1dhS8TVZodqTQsj7gL6OkA8KXnRc9jgbaPBSRS1I5YiI/edit?usp=sharing
+Here is a Google document link to my outline, which is currently being revised: https://docs.google.com/document/d/1dhS8TVZodqTQsj7gL6OkA8KXnRc9jgbaPBSRS1I5YiI/edit?usp=sharing
 
-- It is on viewer mode, but if there ends up being edit access, do not edit it.
+- It is on viewer mode, so do not edit it even if edit access is granted.
 
 ## Setup
 
@@ -31,7 +31,7 @@ Raw data are not in Git. Obtain them first:
 
 1. `uv run --locked python code/00_download_raw_data.py [GROUPS...]` downloads the files registered in `code/sources.py` (standard library only). Groups are states (`LA`, `IL`, `NJ`) saved to `data/raw/<state>/`, and national sources (`FSA` FAFSA completion archives, `CCD` NCES school files, `ACGR` EDFacts graduation rates via the Urban Institute, `EDGE` NCES school locations and locale codes, `PSS` NCES Private School Survey) saved to `data/raw/US/`. All groups together are about 4.4 GB. Finished files are skipped on rerun, so an interrupted download can be resumed with the same command. Each file's URL, access time, and SHA-256 hash are recorded in `data/raw/download_manifest.csv`, which is tracked in Git.
    - Several CCD Membership zips use Deflate64 compression, which Python's `zipfile` cannot read; extract them with `unzip` or another tool that supports it.
-2. `bash run.sh` then builds the derived data: `code/01_clean_fsa.py` turns the FSA archives into `data/derived/fsa_fafsa_hs.parquet` (school × graduating class, classes of 2015 on).
+2. `bash run.sh` then runs steps 1–6 (clean FSA, link FSA school codes, build the FSA school panel, build the CCD school panel, build the policy timing and analysis panel, estimate the first stage) and the tests. `code/README.md` lists each script's inputs and outputs.
 
 ## Repository structure
 

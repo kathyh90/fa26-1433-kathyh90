@@ -25,14 +25,12 @@ import re
 import duckdb
 import pandas as pd
 
-from config import DERIVED, RAW
+from config import DERIVED, RAW, STUDY_STATES
 
 FSA_DIR = RAW / "US" / "fsa_fafsa_completion"
 OUT = DERIVED / "fsa_fafsa_hs.parquet"
 SHEET = "School Level Data"
 HEADER_ROW = 3  # rows 0-2 are the title, cycle labels, and date labels
-STUDY_STATES = ["LA", "IL", "AL", "TX", "CO", "MD", "CA", "IN", "NH",
-                "NE", "OK", "NY", "NJ", "CT", "PA"]
 
 # Header names, e.g. "Applications\nComplete\nJun  2018" or "...Jun30  2026".
 # "Jun"/"Dec" with no day are the fixed prior-cycle columns; "Jun30" is the

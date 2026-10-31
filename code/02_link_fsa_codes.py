@@ -67,7 +67,7 @@ from functools import lru_cache
 import duckdb
 import pandas as pd
 
-from config import DERIVED, RAW
+from config import DERIVED, RAW, STUDY_STATES
 from matching import FUZZY_COVERAGE, fuzzy_coverage, normalize
 
 PANEL = DERIVED / "fsa_fafsa_hs.parquet"
@@ -82,8 +82,6 @@ CHECK_TIERS = ("ccd_relinked", "ambiguous_resolved")
 LINKED = ("fsa_code",) + FSA_TIERS + CHECK_TIERS + CCD_TIERS + PSS_TIERS + ("other_year",)
 OPEN_TIERS = ["name_only_rejected", "ambiguous", "unlinked"]
 MIN_PREFIX = 12        # shortest FSA name (characters, normalized) allowed to prefix-match
-STUDY_STATES = ["LA", "IL", "AL", "TX", "CO", "MD", "CA", "IN", "NH",
-                "NE", "OK", "NY", "NJ", "CT", "PA"]
 
 # CCD GSHI values that are a grade below 12; everything else (12, 13, missing,
 # not applicable, ungraded, adult education) is kept.

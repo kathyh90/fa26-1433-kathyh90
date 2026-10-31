@@ -76,7 +76,7 @@ Known gaps: a record whose name, once generic words and its own city are set asi
 
 ## Policy inputs: `data/policy/state_mandates.csv` and `data/policy/co_grantee_schools.csv`
 
-Hand-entered from statutes and agency reports (sources in each row and in `docs/source-notes.md`); tracked in Git. Read by `code/04_policy_timing.py`.
+Hand-entered from statutes and agency reports (sources in each row and in `docs/source-notes.md`); tracked in Git. Read by `code/05_build_analysis_panel.py`.
 
 `state_mandates.csv`, one row per study state:
 
@@ -99,7 +99,7 @@ Hand-entered from statutes and agency reports (sources in each row and in `docs/
 
 ## `policy_timing.parquet`
 
-- **Produced by:** `code/04_policy_timing.py`
+- **Produced by:** `code/05_build_analysis_panel.py`
 - **Unit of observation:** treatment unit: one row per study state, except Colorado, which has one row per grantee school (25 rows).
 - **Key (unique):** `state`, `school_id` (`school_id` missing for statewide rows)
 
@@ -118,14 +118,14 @@ Hand-entered from statutes and agency reports (sources in each row and in `docs/
 
 ## `ccd_school_panel.parquet`
 
-- **Produced by:** `code/05_build_ccd_school_panel.py`
+- **Produced by:** `code/04_build_ccd_school_panel.py`
 - **Unit of observation:** public school × school year, 15 study states, school years 2014-15 to 2024-25. Only schools open that year (CCD statuses Open, New, Added, Changed Boundary/Agency, Reopened); closed, inactive, and future schools are dropped (856–1,300 per year).
 - **Key (unique):** `school_id`, `class_year`
 - **Sources:** CCD school files 029 (Directory), 129 (School Characteristics), 052 (Membership), 033 (Lunch), 059 (Staff); NCES EDGE school locale. CCD negative codes (−1 missing, −2 not applicable, −9 suppressed, ...) are missing.
 
 | Variable | Type | Units | Definition | Source | Missing-value codes |
 |---|---|---|---|---|---|
-| `school_id` | string | — | Stable school ID (most recent NCES ID; `code/school_ids.py`); matches `fsa_school_panel.parquet` | derived | — |
+| `school_id` | string | — | Stable school ID (most recent NCES ID; `stable_ids` in `code/matching.py`); matches `fsa_school_panel.parquet` | derived | — |
 | `nces_id` | string | — | NCES ID that year | 029 `NCESSCH` | — |
 | `class_year` | int | year | Spring year of the school year (2014-15 → 2015); grade-12 counts are that graduating class's seniors | derived | — |
 | `state`, `name`, `lea_id`, `lea_name`, `city` | string | — | State, school name, district ID and name, physical city | 029 | — |
@@ -149,7 +149,7 @@ Known breaks: Illinois's alternative and special-education schools stop reportin
 
 ## `analysis_panel.parquet`
 
-- **Produced by:** `code/06_build_analysis_panel.py`
+- **Produced by:** `code/05_build_analysis_panel.py`
 - **Unit of observation:** public school × graduating class in the 15 study states (FSA public rows joined to CCD and policy timing). No rows are dropped; sample screens are `f_*` columns.
 - **Key (unique):** `school_id`, `class_year`
 - **Follows:** Deneault (2023), `mergedata_aejep.do` and `main_aejep.do`.
@@ -185,8 +185,8 @@ Deneault's controls also include school ACT, which is not yet in the data.
 
 ## Output tables (`output/tables/`)
 
-- `sample_screens_by_state.csv` (from `code/06_build_analysis_panel.py`): treated public schools with post-mandate classes in each state, and how many remain after each screen in design order (cumulative), plus the number passing Deneault's screens.
-- `first_stage_by_state.csv` (from `code/07_first_stage.py`): one row per state and specification (`main`, `no_frl`, `deneault` for Louisiana), `controls` (`with_frl` or `no_frl`; Illinois's main uses `no_frl`): `beta` (coefficient on dose × post), `se` (clustered by school), `p`, `n_obs`, `n_schools`, `classes` (window), `mean_fcr_pre` (weighted mean completion rate before the mandate), `mean_dose`.
+- `sample_screens_by_state.csv` (from `code/05_build_analysis_panel.py`): treated public schools with post-mandate classes in each state, and how many remain after each screen in design order (cumulative), plus the number passing Deneault's screens.
+- `first_stage_by_state.csv` (from `code/06_first_stage.py`): one row per state and specification (`main`, `no_frl`, `deneault` for Louisiana), `controls` (`with_frl` or `no_frl`; Illinois's main uses `no_frl`): `beta` (coefficient on dose × post), `se` (clustered by school), `p`, `n_obs`, `n_schools`, `classes` (window), `mean_fcr_pre` (weighted mean completion rate before the mandate), `mean_dose`.
 
 ## `<dataset>.parquet`
 

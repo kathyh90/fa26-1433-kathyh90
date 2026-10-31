@@ -1,8 +1,8 @@
 """Build the school x class analysis panel for the first stage, with sample flags.
 
 Merges data/derived/fsa_school_panel.parquet (FAFSA completions),
-ccd_school_panel.parquet (denominator, weights, controls, screens), and
-policy_timing.parquet (event time, dose and reference classes). Following
+ccd_school_panel.parquet (denominator, weights, controls, screens), and each
+state's policy timing (event time, dose and reference classes). Following
 Deneault (2023; her mergedata_aejep.do and main_aejep.do):
 
   fcr     = completed FAFSAs through June / seniors, capped at 1. The
@@ -19,37 +19,137 @@ No rows are dropped. Each sample screen is a column (f_*) so the sample rules
 can be chosen and varied later; the script prints how many schools each state
 keeps under Deneault's screens and under the project design's screens.
 
-Colorado: only Fund My Future grantee schools have policy timing; other
-Colorado schools are kept with treated = False and no event time.
+Policy timing comes from hand-entered inputs (sources in docs/source-notes.md):
+  data/policy/state_mandates.csv      one row per study state
+  data/policy/co_grantee_schools.csv  Colorado's Fund My Future grantee high
+                                      schools, the only Colorado schools covered
+Timing rule (docs/project-design.md): e = 0 is the first covered class. The
+reference class (e = -1) is the last class before it that is not a partial-
+rollout class; the dose window is the two classes before the reference class,
+again skipping partial-rollout classes. Post classes run from e = 0 to the last
+covered class or the newest FSA class, whichever is earlier. Colorado gets one
+timing row per grantee school; other Colorado schools are kept with
+treated = False and no event time. Every other state gets one statewide row.
 
-Writes data/derived/analysis_panel.parquet (key: school_id, class_year).
+Writes data/derived/policy_timing.parquet (one row per state or Colorado
+school) and data/derived/analysis_panel.parquet (key: school_id, class_year).
 
 Usage (from the repository root):
-    uv run --locked python code/06_build_analysis_panel.py
+    uv run --locked python code/05_build_analysis_panel.py
 """
 
 import duckdb
 import numpy as np
 import pandas as pd
 
-from config import DERIVED, OUTPUT
+from config import DERIVED, OUTPUT, ROOT, STUDY_STATES
 
+POLICY = ROOT / "data" / "policy"
+STATES = POLICY / "state_mandates.csv"
+CO_SCHOOLS = POLICY / "co_grantee_schools.csv"
 FSA = DERIVED / "fsa_school_panel.parquet"
 CCD = DERIVED / "ccd_school_panel.parquet"
 TIMING = DERIVED / "policy_timing.parquet"
 OUT = DERIVED / "analysis_panel.parquet"
+COVID = {2020, 2021}
+ROLLOUT_2024 = {2024}   # class affected by the delayed 2024-25 FAFSA
 SCREENS_TABLE = OUTPUT / "tables" / "sample_screens_by_state.csv"
-STUDY_STATES = ["LA", "IL", "AL", "TX", "CO", "MD", "CA", "IN", "NH",
-                "NE", "OK", "NY", "NJ", "CT", "PA"]
 WINDOW = (-4, 1)   # Deneault's estimation window in event time (e = -4 ... +1)
 VIRTUAL = {"yes", "full virtual", "exclusively virtual", "primarily virtual",
            "virtual with face to face options"}
 
 
+# --- Policy timing -----------------------------------------------------------
+
+def classes_before(year, n, skip):
+    """Return the n classes before year, newest first, skipping classes in skip."""
+    out, y = [], year - 1
+    while len(out) < n:
+        if y not in skip:
+            out.append(y)
+        y -= 1
+    return out
+
+
+def timing(first, partial, last, fsa_first, fsa_last, fsa_prelim):
+    """Return the timing fields for one unit (state or school)."""
+    skip = {partial} if pd.notna(partial) else set()
+    reference, dose2, dose1 = classes_before(first, 3, skip)
+    post_last = min(last, fsa_last) if pd.notna(last) else fsa_last
+    post = list(range(first, post_last + 1)) if post_last >= first else []
+    pre = [dose1, dose2, reference]
+    return {
+        "reference_class": reference,
+        "dose_class_1": dose1,
+        "dose_class_2": dose2,
+        "post_first": post[0] if post else pd.NA,
+        "post_last": post[-1] if post else pd.NA,
+        "n_post_classes": len(post),
+        "post_includes_preliminary": fsa_prelim in post,
+        "dose_or_reference_preliminary": fsa_prelim in pre,
+        "dose_in_fsa": dose1 >= fsa_first,
+        "dose_or_reference_covid": bool(COVID & set(pre)),
+        "dose_or_reference_2024": bool(ROLLOUT_2024 & set(pre)),
+        "post_includes_2024": 2024 in post,
+    }
+
+
+def policy_timing(fsa):
+    """Return (and write) the timing fields for each state, or Colorado grantee school."""
+    states = pd.read_csv(STATES, dtype=str)
+    co = pd.read_csv(CO_SCHOOLS, dtype=str)
+    for d in (states, co):
+        for c in ("first_covered_class", "partial_rollout_class", "last_covered_class"):
+            if c in d:
+                d[c] = pd.to_numeric(d[c]).astype("Int64")
+    print(f"Read {len(states)} states and {len(co)} Colorado grantee schools")
+
+    fsa_first, fsa_last = int(fsa["class_year"].min()), int(fsa["class_year"].max())
+    prelim = int(fsa.loc[fsa["kind"] == "preliminary", "class_year"].max())
+    print(f"FSA classes {fsa_first}-{fsa_last} (class of {prelim} preliminary)")
+
+    rows = []
+    for _, s in states.iterrows():
+        units = ([(r["nces_id"], r["first_covered_class"], r["partial_rollout_class"]) for _, r in co.iterrows()]
+                 if s["state"] == "CO" else [(pd.NA, s["first_covered_class"], s["partial_rollout_class"])])
+        for school_id, first, partial in units:
+            rows.append({"state": s["state"], "school_id": school_id, "policy_type": s["policy_type"],
+                         "first_covered_class": first, "partial_rollout_class": partial,
+                         "last_covered_class": s["last_covered_class"],
+                         **timing(first, partial, s["last_covered_class"], fsa_first, fsa_last, prelim)})
+    out = pd.DataFrame(rows)
+    for c in ("post_first", "post_last"):
+        out[c] = out[c].astype("Int64")
+    out.to_parquet(TIMING, index=False)
+    print(f"Wrote {TIMING.name}: {len(out)} rows ({out['school_id'].notna().sum()} Colorado schools)")
+
+    show = out.assign(
+        dose=out["dose_class_1"].astype(str) + "-" + out["dose_class_2"].astype(str).str[-2:],
+        post=out["post_first"].astype(str) + "-" + out["post_last"].astype(str),
+        flags=out.apply(lambda r: ", ".join(f for f, on in [
+            ("dose not in FSA", not r["dose_in_fsa"]), ("COVID in dose/ref", r["dose_or_reference_covid"]),
+            ("2024 in dose/ref", r["dose_or_reference_2024"]), ("2024 in post", r["post_includes_2024"]),
+            ("preliminary in dose/ref", r["dose_or_reference_preliminary"]),
+            ("post incl. preliminary", r["post_includes_preliminary"])] if on), axis=1))
+    show.loc[show["n_post_classes"] == 0, "post"] = "none yet"
+    co_rows = show["school_id"].notna()
+    print("\n" + show.loc[~co_rows, ["state", "first_covered_class", "dose", "reference_class", "post",
+                                     "flags"]].to_string(index=False))
+    print("\nColorado grantee schools:")
+    print(show.loc[co_rows].groupby(["first_covered_class", "partial_rollout_class", "dose", "reference_class",
+                                     "post", "flags"], dropna=False)["school_id"].count()
+          .rename("schools").reset_index().to_string(index=False))
+    # Read back through DuckDB so column types match the other panels (nullable ints as floats).
+    return duckdb.connect().execute(f"SELECT * FROM read_parquet('{TIMING.as_posix()}')").df()
+
+
+# --- Analysis panel ----------------------------------------------------------
+
 def load():
     """FSA public schools joined to CCD and policy timing, with row counts."""
     con = duckdb.connect()
     fsa = con.execute(f"SELECT * FROM read_parquet('{FSA.as_posix()}')").df()
+    policy = policy_timing(fsa)
     n_all = len(fsa)
     fsa = fsa[fsa["sector"] == "public"]
     print(f"FSA school x class rows: {n_all:,}; public: {len(fsa):,} "
@@ -61,9 +161,8 @@ def load():
           f"{(df['_merge'] == 'left_only').sum():,} (mostly the class of 2026, whose CCD year is not out)")
     df = df.drop(columns="_merge")
 
-    timing = con.execute(f"SELECT * FROM read_parquet('{TIMING.as_posix()}')").df()
-    statewide = timing[timing["school_id"].isna()].drop(columns="school_id")
-    by_school = timing[timing["school_id"].notna()].drop(columns="state")
+    statewide = policy[policy["school_id"].isna()].drop(columns="school_id")
+    by_school = policy[policy["school_id"].notna()].drop(columns="state")
     df = pd.concat([
         df[df["state"] != "CO"].merge(statewide, on="state", how="left"),
         df[df["state"] == "CO"].merge(by_school, on="school_id", how="left"),

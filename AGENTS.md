@@ -34,6 +34,8 @@ tests/            pytest tests
 - Update `docs/codebook.md` whenever variables are added, removed, or redefined.
 - Record consequential decisions in `docs/DECISIONS.md`.
 - Write comments and function definitions for the code for user readability.
+- Be as concise as possible while keeping all of the necessary information. This is a research repository, so code should be concise, readable, and repeatable. Prefer functions over hard coding values.
+- Add all tests in one test document instead of creating new test documents.
 
 ## Commands
 

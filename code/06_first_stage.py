@@ -28,7 +28,7 @@ class); the `controls` column of the output records which set was used.
 Writes output/tables/first_stage_by_state.csv.
 
 Usage (from the repository root):
-    uv run --locked python code/07_first_stage.py
+    uv run --locked python code/06_first_stage.py
 """
 
 import duckdb

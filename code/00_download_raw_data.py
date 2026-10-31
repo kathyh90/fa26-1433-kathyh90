@@ -26,8 +26,7 @@ import urllib.error
 from datetime import datetime, timezone
 
 from config import RAW, ROOT
-from http_utils import CHUNK, RETRIES, open_url
-from sources import SOURCES
+from sources import CHUNK, RETRIES, SOURCES, open_url
 
 # One row per downloaded file, keyed by its repository-relative path.
 MANIFEST = RAW / "download_manifest.csv"

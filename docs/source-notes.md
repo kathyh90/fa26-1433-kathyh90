@@ -69,7 +69,7 @@ All LDOE links carry a `?sfvrsn=` version parameter, which is dropped; re-upload
 - **Caveats:**
   - Illinois moved from the ACT to the SAT (taken in grade 11) starting in spring 2017. From 2018 the workbook has an SAT sheet.
   - The year label is ISBE's report card year. Its mapping to graduating class must be checked in the glossary before building the panel.
-  - ISBE resets connections from clients without browser-like headers. `code/http_utils.py` sends them.
+  - ISBE resets connections from clients without browser-like headers. `code/sources.py` (HTTP helpers) sends them.
 
 ## New Jersey (`NJ`)
 

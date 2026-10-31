@@ -36,9 +36,8 @@ Usage (from the repository root):
 import duckdb
 import pandas as pd
 
-from config import DERIVED
-from matching import FUZZY_COVERAGE, fuzzy_coverage, normalize
-from school_ids import stable_ids
+from config import DERIVED, STUDY_STATES
+from matching import names_match, normalize, stable_ids
 
 PANEL = DERIVED / "fsa_fafsa_hs.parquet"
 CODES = DERIVED / "fsa_school_codes.parquet"
@@ -46,13 +45,6 @@ OUT = DERIVED / "fsa_school_panel.parquet"
 OPEN_TIERS = ("name_only_rejected", "ambiguous", "unlinked")
 COUNTS = ["submitted_jun", "completed_jun", "submitted_dec", "completed_dec"]
 NETWORK = r"SCHOOLS$|\bNETWORK\b"
-STUDY_STATES = ["LA", "IL", "AL", "TX", "CO", "MD", "CA", "IN", "NH",
-                "NE", "OK", "NY", "NJ", "CT", "PA"]
-
-
-def names_match(a, b):
-    """True if two normalized names are equal or agree on distinctive words."""
-    return a == b or fuzzy_coverage(a, b, None) >= FUZZY_COVERAGE
 
 
 def load_records():

@@ -18,12 +18,12 @@ codes (-1 missing, -2 not applicable, -9 suppressed, ...) become missing.
 Rows are schools open that year (CCD also lists a school in the year it
 closes). class_year is the spring year of the school year, so grade-12
 enrollment in class_year is the senior class of that graduating class.
-school_id follows code/school_ids.py, so it matches fsa_school_panel.parquet.
+school_id follows matching.stable_ids (code/matching.py), so it matches fsa_school_panel.parquet.
 
 Writes data/derived/ccd_school_panel.parquet (key: school_id, class_year).
 
 Usage (from the repository root):
-    uv run --locked python code/05_build_ccd_school_panel.py
+    uv run --locked python code/04_build_ccd_school_panel.py
 """
 
 import io
@@ -35,15 +35,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import DERIVED, RAW
-from school_ids import stable_ids
+from config import DERIVED, RAW, STUDY_STATES
+from matching import stable_ids
 
 CCD_DIR = RAW / "US" / "nces_ccd_school"
 EDGE_DIR = RAW / "US" / "nces_edge_locations"
 OUT = DERIVED / "ccd_school_panel.parquet"
 FIRST_YEAR, LAST_YEAR = 2015, 2025   # class years (spring of 2014-15 ... 2024-25)
-STUDY_STATES = ["LA", "IL", "AL", "TX", "CO", "MD", "CA", "IN", "NH",
-                "NE", "OK", "NY", "NJ", "CT", "PA"]
 CHUNK = 500_000
 RACES = {"AM": "american_indian", "AS": "asian", "HI": "hispanic", "BL": "black",
          "WH": "white", "HP": "pacific_islander", "TR": "two_or_more"}
