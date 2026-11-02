@@ -35,7 +35,7 @@ import duckdb
 import pandas as pd
 import pyfixest as pf
 
-from config import DERIVED, OUTPUT
+from config import DERIVED, OUTPUT, STUDY_STATES
 
 PANEL = DERIVED / "analysis_panel.parquet"
 OUT = OUTPUT / "tables" / "first_stage_by_state.csv"
@@ -43,7 +43,6 @@ EXCLUDE_STATES = {"CO"}   # put Colorado back by removing it here
 # Main spec without FRL where a window class lacks FRL data. Revisit IL with
 # FRL from the Illinois Report Card (state data, step 4).
 NO_FRL_STATES = {"IL"}
-STATE_ORDER = ["LA", "IL", "AL", "TX", "MD", "CA", "IN", "NH", "NE", "OK", "NY", "NJ", "CO"]
 DESIGN_SCREENS = ["f_in_ccd", "f_regular", "f_not_virtual", "f_cohort9_positive", "f_ratio_ok",
                   "f_dose_ok", "f_balanced"]
 DENEAULT_SCREENS = ["f_in_ccd", "f_not_special_ed", "f_cohort9_positive", "f_ratio_ok",
@@ -56,24 +55,26 @@ SPECS = {
 }
 
 
-def sample(df, screens, controls):
-    """Window rows of schools passing the screens with complete controls in every window class."""
+def sample(df, screens, controls, y="fcr"):
+    """Window rows of schools passing the screens with complete controls and
+    outcome y in every window class."""
     d = df[df["treated"] & (df["n_post_classes"] > 0) & df["in_window"] & df[screens].all(axis=1)]
-    complete = d[controls + ["fcr", "weight"]].notna().all(axis=1).groupby(d["school_id"]).transform("all")
+    complete = d[controls + [y, "weight"]].notna().all(axis=1).groupby(d["school_id"]).transform("all")
     return d[complete].copy()
 
 
-def estimate(d, controls):
-    """Fit the first stage on one state's sample; return beta, SE, and sample sizes."""
+def estimate(d, controls, y="fcr"):
+    """Fit y on dose x post (first stage for y = fcr; reduced form in step 8) on
+    one state's sample; return beta, SE, and sample sizes."""
     d = d.assign(trt=d["dose"] * d["post"].astype(float))
-    fml = "fcr ~ trt + " + " + ".join(controls) + " | school_id + class_year"
+    fml = f"{y} ~ trt + " + " + ".join(controls) + " | school_id + class_year"
     fit = pf.feols(fml, data=d, weights="weight", vcov={"CRV1": "school_id"})
     pre = d[~d["post"]]
     return {
         "beta": fit.coef()["trt"], "se": fit.se()["trt"], "p": fit.pvalue()["trt"],
         "n_obs": int(fit._N), "n_schools": d["school_id"].nunique(),
         "classes": f"{d['class_year'].min()}-{d['class_year'].max()}",
-        "mean_fcr_pre": (pre["fcr"] * pre["weight"]).sum() / pre["weight"].sum(),
+        f"mean_{y}_pre": (pre[y] * pre["weight"]).sum() / pre["weight"].sum(),
         "mean_dose": d.drop_duplicates("school_id")["dose"].mean(),
     }
 
@@ -87,7 +88,7 @@ def main():
     print(f"Analysis panel: {len(df):,} rows; states left out: {sorted(EXCLUDE_STATES)}")
 
     rows = []
-    states = [s for s in STATE_ORDER if s in set(df.loc[df["treated"] & (df["n_post_classes"] > 0), "state"])]
+    states = [s for s in STUDY_STATES if s in set(df.loc[df["treated"] & (df["n_post_classes"] > 0), "state"])]
     for st in states:
         if st in EXCLUDE_STATES:
             continue

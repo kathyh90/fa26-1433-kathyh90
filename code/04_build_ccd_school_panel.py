@@ -119,7 +119,7 @@ def num(s):
 
 def read_directory(folder):
     """Directory (029) and school characteristics (129) for one year."""
-    d = stream(folder, "029", {"NCESSCH", "SCH_NAME", "ST", "STABR", "LEAID", "LEA_NAME", "LCITY",
+    d = stream(folder, "029", {"NCESSCH", "ST_SCHID", "SCH_NAME", "ST", "STABR", "LEAID", "LEA_NAME", "LCITY",
                                "SCH_TYPE_TEXT", "CHARTER_TEXT", "LEVEL", "GSLO", "GSHI",
                                "SY_STATUS_TEXT", "VIRTUAL"})
     c = stream(folder, "129", {"NCESSCH", "ST", "STABR", "VIRTUAL", "VIRTUAL_TEXT", "TITLEI_STATUS_TEXT",
@@ -250,7 +250,7 @@ def main():
     df["school_id"] = df["NCESSCH"].map(mapping)
     out = pd.DataFrame({
         "school_id": df["school_id"], "nces_id": df["NCESSCH"], "class_year": df["class_year"],
-        "state": df["ST"], "name": df["SCH_NAME"], "lea_id": df["LEAID"], "lea_name": df["LEA_NAME"],
+        "state": df["ST"], "st_schid": df["ST_SCHID"], "name": df["SCH_NAME"], "lea_id": df["LEAID"], "lea_name": df["LEA_NAME"],
         "city": df["LCITY"], "school_type": df["SCH_TYPE_TEXT"],
         "school_type_std": df["SCH_TYPE_TEXT"].str.strip().str.lower().map(SCHOOL_TYPES),
         "charter": df["CHARTER_TEXT"].str.strip().str.lower().map({"yes": True, "no": False}),

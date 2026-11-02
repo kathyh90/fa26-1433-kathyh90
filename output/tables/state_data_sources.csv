@@ -1,0 +1,51 @@
+state,measure,publisher,source_id,classes,access,status,note
+US,enrollment_race; cohort9; teachers; frl; school_type,NCES CCD,nces_ccd_school,2011-12 to 2025-26 school years,NCES file API,scripted,grade-9 counts lagged 3 years give the cohort
+US,grad_rate; cohort9,EDFacts via Urban Institute,edfacts_acgr_urban,classes 2011-2020,CSV,partial,ranges for privacy; nothing after class 2020
+US,grad_rate; cohort9,EDFacts via ED Data Express (Data Library),edfacts_acgr_ede,class 2021,direct file,scripted,school level; classes 2022 on only in the Data Download Tool (bot check; manual)
+US,act_sat,EDFacts via Urban Institute,edfacts_assess_urban,2014-15 to 2018-19 school years,JSON API,scripted,"high school % proficient (reading, math); baseline ability for the robustness check"
+US,locale,NCES EDGE,nces_edge_locations,2014-15 on,zip,scripted,
+US,poverty,NCES EDGE School Neighborhood Poverty,edge_neighborhood_poverty,2015-16 to 2021-22,zip,scripted,
+US,counselors_el,ED Office for Civil Rights CRDC,crdc,"2013-14, 2015-16, 2017-18, 2020-21, 2021-22",zip,scripted,biennial
+US,college_location,NCES IPEDS HD,ipeds_hd,2014-2024,zip,scripted,
+LA,grad_rate,LDOE,ldoe_grad_rates,2014-2025,page scrape,scripted,"rates only, no counts"
+LA,act_sat,LDOE,ldoe_act,2013-2025,page scrape,scripted,universal ACT
+LA,graduates; college_enroll,LDOE,ldoe_college_enrollment,2012-2024,listed,scripted,NSC (+ Board of Regents from 2018); enrolled by Oct 31 of 1st fall / all graduates that year
+LA,cohort9,LDOE October counts,ldoe_oct_counts,2010-2025,page scrape,scripted,
+IL,college_enroll,ISBE Report Card (NSC),isbe_report_card,classes 2013-2024,listed,scripted,12 and 16 months; report card year Y = class Y-2; rates only
+IL,grad_rate; act_sat; frl,ISBE Report Card,isbe_report_card,report cards 2015-2026,listed,scripted,"ACT to 2016, SAT from 2017; low-income share; cohort graduate counts from 2024"
+AL,graduates; grad_rate,ALSDE Cohort Graduation Rate app,alsde_cohort_grad,2019-2025,form post,partial,"exports for classes 2012-2018 are header-only; federal graduate counts often '~', cohort x rate reproduces them"
+AL,college_enroll,ACHE,ache_college_going,class 2025 only,PDF,partial,earlier ACHE files 404 after site change; ALSDE 2017-18 report and PARCA dashboard not yet scripted; class 2023 never published
+AL,graduates; college_enroll,ACHE High School Graduate Reports,ache_hs_reports,classes 2012-2024,form post,scripted,"fall enrollment in Alabama PUBLIC colleges only (2-year, 4-year); graduates from ALSDE"
+AL,act_sat,ALSDE,,,,not_found,use EDFacts proficiency or CCD-era files
+MD,graduates; college_enroll,MLDS Center (MHEC + NSC),mlds_hs_to_college,classes 2008-2024,page scrape,scripted,school names only (no codes); immediate = full-time degree-seeking fall; within one year = any enrollment
+MD,grad_rate; act_sat,MSDE Report Card,,,,blocked,download service rejects scripted requests; not needed for the outcome
+TX,graduates; grad_rate,TEA,tea_grad,2016-2024,page scrape,partial,class 2015 link is dead (404); class 2014 page has no campus file
+TX,act_sat,TEA,tea_sat_act,2011-2024,page scrape,dropped,not a control; no longer downloaded
+TX,graduates; college_enroll,THECB,thecb_hs_enrolled,classes 2019-2024,listed,partial,"Texas public and private colleges, fall after graduation; schools >25 graduates; fall 2015-2018 not in the report center"
+CO,graduates; grad_rate,CDE,cde_grad,2019-2025,page scrape (served names),scripted,classes 2015-2018 from EDFacts ACGR; analysis deferred
+CO,college_enroll,CDE (CDHE-validated),cde_matriculation,2019-2025,page scrape (served names),scripted,earlier classes only in CDHE report PDFs
+CO,act_sat,CDE,,,,not_found,"SAT/PSAT files on the data-files page are growth (MGP), not scores; not needed (DECISIONS 2026-11-01)"
+CA,graduates; grad_rate,CDE,cde_acgr,2017-2026,listed,partial,classes 2015-2016 use an older cohort file not yet located
+CA,graduates; college_enroll,CDE,cde_cgr12,classes 2015-2023,listed,scripted,"12-month, any college (NSC); denominator = completers incl. GED/CHSPE; class 2024 not yet posted"
+CA,act_sat,CDE,,,,not_found,CDE stopped SAT/ACT files; use EDFacts proficiency
+IN,graduates; college_enroll,Indiana CHE,che_college_going,classes 2008-2024,page scrape,scripted,"any NSC college, year after graduation; public and private high schools; IDs only in the 2024 file"
+IN,grad_rate,IDOE,idoe_data_center; idoe_archive,2014-2025,page scrape,scripted,older years on the Data Reports Archive page
+IN,enrollment_race; frl,IDOE,idoe_data_center,enrollment 2006-2026,page scrape,scripted,
+IN,act_sat,IDOE,idoe_data_center; idoe_archive,SAT 2022-2026,page scrape,dropped,grade-11 SAT; not a control; no longer downloaded
+NH,graduates; grad_rate,NH DOE iPlatform (Cohort Counts By School),manual/iplatform_cohort_counts,2012-2025,manual browser export,manual,site returns 403 to scripts; one report per year
+NH,college_enroll,NH DOE iExplore (Post-secondary Enrollment Rate),manual/iexplore_postsecondary,2016-2025,manual browser export,manual,rates only; dashboard year Y = class Y (checked)
+NH,college_enroll,NH DOE iPlatform (Completers By Status By School),manual/iplatform_completers_status,2012-2025,manual browser export,manual,"secondary: reported post-graduation plans, not enrollment"
+NH,act_sat,NH DOE,,,,not_found,not needed (DECISIONS 2026-11-01)
+NE,graduates; grad_rate; college_enroll; enrollment_race; frl; teachers,NDE NEP,nde_nep,2015-16 to 2024-25,JSON API,scripted,
+NE,act_sat,NDE NEP,nde_nep,2016-17 to 2024-25,JSON API,dropped,ACT files not a control; no longer downloaded
+NE,college_enroll,CCPE college continuation,ccpe_continuation,2007-08 to 2024-25,direct file (dashboard DOWNLOAD button),scripted,
+OK,act_sat,OSRHE High School Indicators,osrhe_hs_indicators,2018-2024,page scrape,dropped,mean ACT; not a control; no longer downloaded
+OK,graduates; college_enroll,OSRHE High School Indicators,osrhe_hs_indicators,2009-2024,page scrape,partial,in-state colleges only (out-of-state from class 2023); no school number; read from class 2013
+OK,grad_rate,OSDE,,,,not_found,
+NY,graduates; grad_rate; college_enroll; enrollment_race,NYSED,nysed_downloads,per data.nysed.gov,page scrape,scripted,"postsecondary enrollment (16 months) for classes 2021-2024, in Report Cards 2022-2025 (Access)"
+NJ,grad_rate; act_sat; college_enroll,NJDOE School Performance Reports,njdoe_spr,2015-16 to 2024-25,listed,scripted,graduate counts to be checked in the files
+NJ,college_enroll,NJDOE SPR Additional Data (postsecondary trends),njdoe_postsecondary,fall: classes 2019-2024; 16-month: 2018-2023,page scrape,scripted,"rates only (NSC-matched share, published as a range); SPR database has none from 2023-24"
+CT,college_enroll,P20 WIN (data.ct.gov),ct_open_data,per dataset,Socrata CSV,scripted,
+CT,grad_rate; act_sat,CSDE (data.ct.gov),ct_open_data,per dataset,Socrata CSV,scripted,accountability indicators; graduate counts are on EdSight (not scripted)
+PA,graduates; grad_rate,PDE,pde_graduation,2012-13 to 2024-25,page scrape,scripted,graduates file has post-graduate plans
+PA,college_enroll,PDE / Future Ready PA,,,,not_found,

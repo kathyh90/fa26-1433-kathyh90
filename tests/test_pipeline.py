@@ -4,6 +4,7 @@ Tests that read a derived file are skipped until the script that writes it has r
 """
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "code"))
 
 from config import DERIVED, OUTPUT, RAW, ROOT, STUDY_STATES  # noqa: E402
+import sources  # noqa: E402
 
 
 def load(name, script):
@@ -49,6 +51,9 @@ school_panel = load("school_panel", "03_build_fsa_school_panel.py")
 ccd_panel = load("ccd_panel", "04_build_ccd_school_panel.py")
 analysis_panel = load("analysis_panel", "05_build_analysis_panel.py")
 first_stage = load("first_stage", "06_first_stage.py")
+state_outcomes = load("state_outcomes", "07_build_state_outcomes.py")
+reduced_form = load("reduced_form", "08_reduced_form.py")
+import state_files  # noqa: E402
 
 
 # --- code/config.py: shared paths -------------------------------------------
@@ -62,6 +67,104 @@ class TestConfig:
         """RAW, DERIVED, and OUTPUT all live under ROOT."""
         for path in (RAW, DERIVED, OUTPUT):
             assert path.is_relative_to(ROOT)
+
+
+# --- code/sources.py: source-list helpers and the catalog (no network) -------
+
+class TestSources:
+    def test_year_label(self):
+        """The first year or year range in a filename becomes the label."""
+        assert sources.year_label("2012-2017-state-lea-school-act-summary.xlsx") == "2012-2017"
+        assert sources.year_label("act-scores---class-of-2014.xlsx") == "2014"
+        assert sources.year_label("24-25_gradrate.zip") == "24-25"
+        assert sources.year_label("Agencies.csv") == ""
+
+    def test_local_name(self):
+        """Local names drop the query, unquote, and replace spaces."""
+        url = "https://x.gov/docs/graduates%20public%20by%20school%202024-25.xlsx?language_id=1"
+        assert sources.local_name(url) == "graduates_public_by_school_2024-25.xlsx"
+
+    def test_page_links_filters_by_filename(self):
+        """page_links keeps matching links once, made absolute, without the query."""
+        html = ('<a href="/f/a-2019.xlsx?v=1">a</a> <a href="/f/a-2019.xlsx?v=2">dup</a>'
+                '<a href="b.pdf">b</a> <a href="https://y.org/c-2020.xlsx">c</a>')
+        assert sources.page_links("https://x.gov/p/", r"\.xlsx$", html=html) == [
+            "https://x.gov/f/a-2019.xlsx", "https://y.org/c-2020.xlsx"]
+
+    def test_colorado_patterns_keep_school_workbooks(self):
+        """CO patterns (matched on served filenames) keep the school-level graduation and
+        matriculation workbooks and skip trend, school-type, still-enrolled, and summary files."""
+        grad = ["2018-2019_STATE-LEA-SCH_GraduationCompletion_DataReleaseWorkbook.xlsx",
+                "2022-2023_GraduationandCompletion_CombinedRelease_PrivacyApplied.xlsx",
+                "2023-2024_GraduationCompletionRates_StateDistrictSchool_PRIVACYAPPLIED.xlsx",
+                "2024-2025_Graduation-CompletionRates_PRIVACY-APPLIED.xlsx"]
+        skip = ["2024-2025_Graduation-Completion_State_Trends.xlsx",
+                "2024-2025_Graduation-Completion_STATE_District-School-Types.xlsx",
+                "2022-2023_GraduationCompletion_STATE_Summary.docx",
+                "AYG_2025_4-year_StillEnrolledRates_PRIVACY-APPLIED.xlsx"]
+        assert all(re.search(sources.CO_GRAD, n, re.I) for n in grad)
+        assert not any(re.search(sources.CO_GRAD, n, re.I) for n in skip)
+        assert re.search(sources.CO_MATRIC, "2023MatriculationRatesbyStateDistrictSchool.xlsx", re.I)
+        assert re.search(sources.CO_MATRIC, "2025_Matriculation-StateDistrictSchool_forSBErelease.xlsx", re.I)
+
+    def test_check_flags_changed_or_missing_manual_exports(self, tmp_path):
+        """--check passes an unchanged manual export and flags one that changed or is missing."""
+        download = load("download", "00_download_raw_data.py")
+        f = tmp_path / "export.xlsx"
+        f.write_bytes(b"PK\x03\x04original")
+        row = {"kind": "data", "status": "manual", "sha256": download.sha256(f)}
+        assert download.check_existing({str(f): row}) == []
+        f.write_bytes(b"PK\x03\x04edited")
+        assert download.check_existing({str(f): row})[0][1].startswith("manual export changed")
+        f.unlink()
+        assert download.check_existing({str(f): row})[0][1] == "manual export missing"
+
+    def test_review_parsing_helpers(self):
+        """State-file values: bounds become their bound and are flagged; codes become
+        NaN; school-year labels give the spring class; LA site codes may be alphanumeric."""
+        review = state_files
+        assert [review.value(v) for v in [">99", ">= 99", "≤1", "45.2%", "1,234"]] == [99, 99, 1, 45.2, 1234]
+        assert all(pd.isna(review.value(v)) for v in ["~", "NR", "n/a", ""])
+        assert review.CENSORED.match(">= 99") and not review.CENSORED.match("99")
+        assert review.class_of("2015-2016") == review.class_of("2015-16") == 2016
+        assert all(review.LA_SITE.fullmatch(c) for c in ["001005", "WBB001", "3A1001"])
+        assert not review.LA_SITE.fullmatch("Parish")
+
+    def test_prune_drops_rows_of_deleted_files_only(self, tmp_path, monkeypatch):
+        """--prune removes manifest rows whose file is gone, keeps present files and
+        manual exports (a missing manual export is an error for --check instead)."""
+        download = load("download", "00_download_raw_data.py")
+        monkeypatch.setattr(download, "save_manifest", lambda rows: None)
+        kept = tmp_path / "kept.xlsx"
+        kept.write_bytes(b"PK\x03\x04x")
+        manifest = {str(kept): {"status": "downloaded"}, str(tmp_path / "gone.xlsx"): {"status": "downloaded"},
+                    str(tmp_path / "manual.xlsx"): {"status": "manual"}}
+        download.prune(manifest)
+        assert set(manifest) == {str(kept), str(tmp_path / "manual.xlsx")}
+
+    def test_catalog_covers_every_study_state(self):
+        """Every study state has at least one catalog row, and each row has every field."""
+        assert set(STUDY_STATES) <= {row[0] for row in sources.CATALOG}
+        assert all(len(row) == len(sources.CATALOG_FIELDS) for row in sources.CATALOG)
+
+    def test_content_check_catches_error_pages(self, tmp_path):
+        """The download check rejects HTML saved as data and accepts real signatures."""
+        download = load("download", "00_download_raw_data.py")
+        cases = {"a.xlsx": b"<!DOCTYPE html><html>", "b.txt": b"  <html><body>captcha",
+                 "c.pdf": b"", "d.xlsx": b"PK\x03\x04rest", "e.csv": b"school,grads\n1,2",
+                 "f.xls": b"\xd0\xcf\x11\xe0rest"}
+        for name, head in cases.items():
+            (tmp_path / name).write_bytes(head)
+        bad = {n for n in cases if download.content_problem(tmp_path / n)}
+        assert bad == {"a.xlsx", "b.txt", "c.pdf"}
+
+    def test_catalog_source_ids_are_registered(self):
+        """A catalog row marked scripted or partial names a source_id some group downloads
+        (checked against the static parts of the registry to avoid network calls)."""
+        registry = Path(sources.__file__).read_text()
+        for state, _, _, source_id, _, _, status, _ in sources.CATALOG:
+            if status in ("scripted", "partial"):
+                assert source_id and f'"{source_id}"' in registry, (state, source_id)
 
 
 # --- code/01_clean_fsa.py: parsing helpers and the derived FSA panel ---------
@@ -500,3 +603,246 @@ class TestFirstStage:
         out = pd.read_csv(first_stage.OUT)
         assert set(out.loc[out["state"] == "LA", "spec"]) == {"main", "no_frl", "deneault"}
         assert out["se"].gt(0).all() and "CO" not in set(out["state"])
+
+
+# --- code/state_files.py, code/07_build_state_outcomes.py: state outcomes -----
+
+
+class TestStateOutcomes:
+    needs_outcomes = needs(state_outcomes.OUT, "07_build_state_outcomes.py")
+
+    def test_bound_and_midpoint(self):
+        """Bounds keep their direction; Deneault's coding puts them at the midpoint
+        of the bounded range (>99 -> 99.5, <1 -> 0.5, >95 -> 97.5, <5 -> 2.5)."""
+        cells = [">99", ">= 99", "≥95", "<1", "≤5", "57.3", "~"]
+        assert [state_files.bound(c) for c in cells] == [">", ">", ">", "<", "<", "", ""]
+        v = pd.Series([state_files.value(c) for c in cells])
+        b = pd.Series([state_files.bound(c) for c in cells])
+        assert state_files.midpoint(v, b).tolist()[:6] == [99.5, 99.5, 97.5, 0.5, 2.5, 57.3]
+
+    def test_link_uses_same_year_then_any_year_then_alias(self):
+        """A code matches CCD in the same year first, then the same code in another
+        year; an alias maps a state code to the CCD code of the same school."""
+        ccd = pd.DataFrame({"state": "LA", "class_year": [2016, 2018, 2018],
+                            "code": ["111111", "222222", "333333"], "school_id": ["A", "B", "C"]})
+        rows = pd.DataFrame({"class_year": [2016, 2017, 2017, 2017],
+                             "code": ["111111", "222222", "999999", "444444"]})
+        m = state_files.link("LA", rows, ccd, {"444444": "333333"})
+        assert m["school_id"].tolist()[:2] == ["A", "B"] and pd.isna(m["school_id"][2])
+        assert m["school_id"][3] == "C"
+        assert m["link"].tolist() == ["same_year", "any_year", "", "any_year"]
+
+    def test_illinois_codes_and_classes(self):
+        """RCDTS (15 digits, with or without dashes) and CCD's 13-digit form agree;
+        report card year Y holds the postsecondary enrollment of class Y-2."""
+        assert state_files.il_code("010010010260001") == state_files.il_code("0100100100001") == "0100100100001"
+        assert state_files.il_code("01-001-0010-26-0001") == "0100100100001"
+        years = state_files.il_report_years()
+        assert set(state_files.IL_CLASS_OF) == set(years) and years[0] == 2015
+        assert years == list(range(2015, years[-1] + 1))      # no report card year missing
+        assert all(state_files.IL_CLASS_OF[y] == y - 2 for y in years) and state_files.IL_CLASS_OF[2024] == 2022
+
+    def test_new_hampshire_code(self):
+        """CCD's 14-digit NH ID ends in the 5-digit school number used by NH DOE."""
+        assert state_files.nh_code("NH-041-52504104128555") == state_files.nh_code("28555") == "28555"
+        assert state_files.NH_CLASS_OF[2024] == 2024
+
+    def test_alabama_key(self):
+        """Alabama schools are keyed by system and school code (the school code alone
+        repeats across systems); CCD 2014-15 has no system, so no key."""
+        assert state_files.al_ccd_key("AL-101-0010") == state_files.al_ccd_key("101-0010") == "101-0010"
+        assert state_files.al_ccd_key("0020") is None
+
+    def test_maryland_name_keys(self):
+        """Maryland's MLDS (system, name) and CCD (district, name) give one key; the
+        SEED School maps from Baltimore City (MLDS) to its own district (CCD)."""
+        assert state_files.md_school_key("Allegany", "Allegany High") == \
+            state_files.md_school_key("Allegany County Public Schools", "ALLEGANY HIGH")
+        assert state_files.md_district("Baltimore County Public Schools") == "BALTIMORE COUNTY"
+        assert state_files.md_district("SEED School of Maryland") == "MARYLAND STATE"
+        assert state_files.MD_ALIASES[state_files.md_school_key("Baltimore City", "The SEED School of Maryland")] == \
+            state_files.md_school_key("SEED School of Maryland", "THE SEED SCHOOL OF MARYLAND")
+
+    def test_texas_campus_rows_add_up(self):
+        """THECB: enrolled + not found + not trackable = total graduates for every
+        campus; campus IDs are 9 digits (leading zeros restored for 2024)."""
+        d = state_files.tx_thecb_enrollment()
+        assert (d["enrolled"] + d["not_found"] + d["not_trackable"] == d["graduates"]).all()
+        assert d["code"].str.fullmatch(r"\d{9}").all() and not d.duplicated(["class_year", "code"]).any()
+
+    def test_nebraska_ccpe_codes(self):
+        """CCPE rows get the CCD code of the same school by district + name: an exact
+        name wins over shared name words (Fremont Senior High vs. Fremont Learning
+        Center, 2019), 'McCook' = 'MC COOK', and a district's only high school is
+        used only where CCPE lists one school (not Cozad's alternative center)."""
+        ccd = pd.DataFrame({"state": "NE", "class_year": 2019, "gshi": "12",
+                            "code": ["270001001", "270001004", "730017001", "240011001"],
+                            "name": ["FREMONT SENIOR HIGH SCHOOL", "FREMONT LEARNING CENTER",
+                                     "MC COOK SENIOR HIGH SCHOOL", "COZAD HIGH SCHOOL"]})
+        rows = pd.DataFrame({"class_year": 2019, "dist": ["270001", "730017", "240011", "240011"],
+                             "School Name": ["Fremont Senior High School", "McCook Senior High School",
+                                             "Cozad High School", "Cozad Alternative Ed Center"]})
+        rows["exact"], rows["words"] = state_files.ne_name_keys(rows["School Name"])
+        code, how = state_files.ne_ccpe_codes(rows, ccd)
+        assert code.tolist() == ["270001001", "730017001", "240011001", "NAME:240011:Cozad Alternative Ed Center"]
+        assert how.tolist() == ["exact_same_year", "words_same_year", "exact_same_year", ""]
+
+    def test_oklahoma_key_and_names(self):
+        """CCD's Oklahoma ST_SCHID forms give one county-district-site key; a CCD
+        school renumbered later (charter moving district) matches an earlier class
+        by the CCD year nearest it, and 'EDMOND MEMORIAL HS' matches district
+        EDMOND's 'MEMORIAL HS' only through district + name."""
+        assert {state_files.ok_ccd_key(x) for x in
+                ["01-I025-705", "01-I025-01-I025-705", "OK-01-I025-01-I025-705"]} == {"01-I025-705"}
+        c = pd.DataFrame({"cc": "55", "class_year": [2015, 2022], "code": ["55-E008-978", "55-E030-978"],
+                          "name": "HARDING CHARTER PREPARATORY HS"})
+        c["exact"], c["words"] = state_files.name_keys(c["name"])
+        d = pd.DataFrame({"cc": "55", "class_year": [2013, 2024], "name": "HARDING CHARTER PREPARATORY HS"})
+        d["exact"], d["words"] = state_files.name_keys(d["name"])
+        assert state_files.name_codes(d, c, "cc")[0].tolist() == ["55-E008-978", "55-E030-978"]
+
+    @needs_outcomes
+    def test_oklahoma_outcomes(self):
+        """Oklahoma, classes 2013-2024: school rows add up to each file's statewide
+        graduates (class 2019: 45,014; 2024: 45,637); fall <= year <= graduates;
+        out-of-state counts only from class 2023; no CCD school twice in a class."""
+        d = pd.read_parquet(state_outcomes.OUT)
+        ok = d[d["state"] == "OK"]
+        assert set(ok["window"]) == {"ok_year_after_instate"} and ok["class_year"].min() == 2013
+        grads = ok.groupby("class_year")["graduates"].sum()
+        assert grads[2019] == 45014 and grads[2024] == 45637
+        r = ok.dropna(subset=["enrolled"])      # 9 small schools, 2013-2015, have blank counts
+        assert (r["enrolled_fall"] <= r["enrolled"]).all() and (r["enrolled"] <= r["graduates"]).all()
+        assert set(ok.dropna(subset=["enrolled_outstate"])["class_year"]) == {2023, 2024}
+        assert not ok.dropna(subset=["school_id"]).duplicated(["class_year", "school_id"]).any()
+        assert ok["school_id"].notna().mean() > 0.99
+
+    def test_new_jersey_key(self):
+        """New Jersey CCD key = last two ST_SCHID segments (9-digit CDS); CCD
+        2014-15's school-only code gives no key."""
+        c = pd.DataFrame({"st_schid": ["NJ-010110-010", "010110-010", "010"]})
+        k = state_files.NJ_CCD_KEY(c)
+        assert k[:2].tolist() == ["010110010", "010110010"] and pd.isna(k[2])
+
+    @needs_outcomes
+    def test_new_jersey_outcomes(self):
+        """New Jersey: fall rate classes 2019-2024 and 16-month 2018-2023 (lower
+        bounds, 0-100); 9-digit CDS codes; every row links; no counts."""
+        d = pd.read_parquet(state_outcomes.OUT)
+        nj = d[d["state"] == "NJ"]
+        assert set(nj["window"]) == {"nj_fall"} and nj["code"].str.fullmatch(r"\d{9}").all()
+        assert nj.dropna(subset=["pct_enrolled"])["class_year"].min() == 2019
+        assert set(nj.dropna(subset=["pct_enrolled"])["class_year"]) >= set(range(2019, 2025))
+        assert nj.dropna(subset=["pct_enrolled_16m"])["class_year"].min() == 2018
+        assert nj[["pct_enrolled", "pct_enrolled_16m"]].stack().dropna().between(0, 100).all()
+        assert nj["school_id"].notna().all() and nj["graduates"].isna().all()
+
+    @needs_outcomes
+    def test_new_york_outcomes(self):
+        """New York, classes 2021-2024: school rows only (12-digit BEDS codes, no
+        state/county/district rows; class 2024 graduates 174,434); NY public +
+        private + out of state = 2-year + 4-year = enrolled; every row links."""
+        d = pd.read_parquet(state_outcomes.OUT)
+        ny = d[d["state"] == "NY"]
+        assert set(ny["window"]) == {"ny_16m_any"} and set(ny["class_year"]) >= {2021, 2022, 2023, 2024}
+        assert ny["code"].str.fullmatch(r"\d{12}").all() and not ny["code"].str.endswith("0000").any()
+        assert "111111111111" not in set(ny["code"])
+        assert ny.loc[ny["class_year"] == 2024, "graduates"].sum() == 174434
+        r = ny.dropna(subset=["enrolled"])
+        parts = r[["enrolled_instate_public", "enrolled_instate_private", "enrolled_outstate"]].sum(axis=1)
+        assert (parts == r["enrolled"]).all() and (r["enrolled_2yr"] + r["enrolled_4yr"] == r["enrolled"]).all()
+        assert ny["school_id"].notna().all()
+
+    @needs_outcomes
+    def test_nebraska_outcomes(self):
+        """Nebraska uses CCPE, classes 2008-2025 (class 2025 = first post class); every
+        row from class 2015 links to CCD, no school twice in a class; rates are
+        enrolled / on-time graduates; NDE's rate is kept for classes 2016-2023 only."""
+        d = pd.read_parquet(state_outcomes.OUT)
+        ne = d[d["state"] == "NE"]
+        assert set(ne["window"]) == {"ne_year_after"}
+        assert ne["class_year"].min() == 2008 and ne["class_year"].max() >= 2025
+        assert ne.loc[ne["class_year"] >= 2015, "school_id"].notna().all()
+        assert not ne.dropna(subset=["school_id"]).duplicated(["class_year", "school_id"]).any()
+        r = ne.dropna(subset=["pct_enrolled"])
+        assert ((100 * r["enrolled"] / r["graduates"] - r["pct_enrolled"]).abs() < 0.01).all()
+        assert set(ne.dropna(subset=["pct_enrolled_nde_oct15"])["class_year"]) <= set(range(2016, 2024))
+
+    @needs_outcomes
+    def test_louisiana_outcomes(self):
+        """One row per state x class x code; rates are percents; penroll is a share and
+        exists from class 2014 (first graduation-rate year); Grambling Lab links 2013-2016."""
+        d = pd.read_parquet(state_outcomes.OUT)
+        la = d[d["state"] == "LA"]
+        assert not d.duplicated(state_outcomes.KEY).any()
+        assert la["class_year"].min() == 2012 and la["class_year"].max() >= 2024
+        assert la["pct_enrolled"].dropna().between(0, 100).all()
+        assert la["grad_rate"].dropna().between(0, 100).all()
+        assert la["penroll"].dropna().between(0, 1).all()
+        assert la.loc[la["class_year"] < 2014, "penroll"].isna().all()
+        assert la.loc[la["class_year"] >= 2014, "penroll"].notna().mean() > 0.9
+        il = d[d["state"] == "IL"]
+        assert set(il["window"]) == {"il_12m_sep30"} and set(la["window"]) == {"la_fall_oct31"}
+        assert il["class_year"].min() == 2013 and il["class_year"].max() >= 2024
+        assert il["pct_enrolled"].dropna().between(0, 100).all() and il["graduates"].isna().all()
+        al = d[d["state"] == "AL"]
+        assert set(al["window"]) == {"al_fall_public_instate"} and al["class_year"].min() == 2012
+        assert (al["enrolled"] <= al["graduates"]).all() and al["school_id"].notna().mean() > 0.95
+        md = d[d["state"] == "MD"]
+        assert set(md["window"]) == {"md_within_1yr"} and md["class_year"].max() >= 2024
+        assert md["pct_enrolled"].dropna().between(0, 100).all() and md["school_id"].notna().mean() > 0.95
+        tx = d[d["state"] == "TX"]
+        assert set(tx["window"]) == {"tx_fall_texas"} and tx["class_year"].min() == 2019
+        assert (tx["pct_enrolled"] <= tx["pct_enrolled_trackable"]).all() and tx["school_id"].notna().all()
+        ca = d[d["state"] == "CA"]
+        assert set(ca["window"]) == {"ca_12m_any"} and ca["class_year"].min() == 2015
+        assert not ca["code"].isin(["0000000", "0000001"]).any() and ca["school_id"].notna().mean() > 0.98
+        ind = d[d["state"] == "IN"]
+        assert set(ind["window"]) == {"in_year_after"} and ind["class_year"].min() == 2008
+        assert not ind.loc[ind["school_id"].notna()].duplicated(["class_year", "school_id"]).any()
+        nh = d[d["state"] == "NH"]
+        assert set(nh["window"]) == {"nh_year_after"} and nh["class_year"].min() == 2016
+        assert nh["school_id"].notna().mean() > 0.95 and nh["code"].str.fullmatch(r"\d{5}").all()
+        ne = d[d["state"] == "NE"]
+        assert set(ne["window"]) == {"ne_year_after"} and (ne["pct_enrolled"].dropna() >= 0).all()
+        assert not ne.duplicated(["class_year", "code"]).any() and ne["school_id"].notna().mean() > 0.95
+        gram = la[la["code"] == "031002"]
+        assert gram["school_id"].notna().all() and set(gram["class_year"]) >= {2013, 2014, 2015, 2016}
+
+
+# --- code/08_reduced_form.py: outcomes merged onto the panel, reduced form ----
+
+
+class TestReducedForm:
+    needs_rf = needs(reduced_form.OUT, "08_reduced_form.py")
+
+    def test_outcome_sample_keeps_classes_with_data_and_balances(self):
+        """Classes without any outcome are dropped; a school missing the outcome in a
+        remaining class is dropped; no pre or no post class left -> None."""
+        d = pd.DataFrame({"school_id": ["a"] * 3 + ["b"] * 3 + ["c"] * 3, "class_year": [2018, 2019, 2020] * 3,
+                          "post": [False, False, True] * 3,
+                          "enroll": [None, 0.5, 0.6, None, None, 0.7, None, 0.4, 0.5]})
+        s = reduced_form.outcome_sample(d, "enroll")
+        assert set(s["class_year"]) == {2019, 2020} and set(s["school_id"]) == {"a", "c"}
+        assert reduced_form.outcome_sample(d[d["class_year"] < 2020], "enroll") is None
+
+    @needs_rf
+    def test_merge_is_one_to_one(self):
+        """The merged panel has exactly the analysis panel's rows; enroll = pct / 100."""
+        n = duckdb.sql(f"select count(*) from '{DERIVED / 'analysis_panel.parquet'}'").fetchone()[0]
+        d = pd.read_parquet(reduced_form.PANEL_OUT, columns=["school_id", "class_year", "pct_enrolled", "enroll"])
+        assert len(d) == n and not d.duplicated(["school_id", "class_year"]).any()
+        r = d.dropna(subset=["enroll"])
+        assert ((r["enroll"] - r["pct_enrolled"] / 100).abs() < 1e-12).all() and r["enroll"].between(0, 1).all()
+
+    @needs_rf
+    def test_states_with_post_outcomes_only(self):
+        """Every state with a post-period outcome class is estimated; OK, NY, NJ
+        (no post-period outcome) and CO (excluded) are not; LA has Deneault's spec."""
+        out = pd.read_csv(reduced_form.OUT)
+        assert {"LA", "IL", "AL", "MD", "TX", "CA", "IN", "NH", "NE"} <= set(out["state"])
+        assert not set(out["state"]) & {"OK", "NY", "NJ", "CO"}
+        la = out[(out["state"] == "LA") & (out["spec"] == "deneault")]
+        assert len(la) == 1 and la["outcome"].iloc[0] == "penroll"
+        assert (out["n_schools"] <= out["schools_first_stage_sample"]).all() and (out["se"] > 0).all()
+

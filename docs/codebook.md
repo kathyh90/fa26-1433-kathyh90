@@ -55,7 +55,7 @@ Known patterns (checked 2026-10-27): one code can cover several records in a cla
 ## `fsa_school_panel.parquet`
 
 - **Produced by:** `code/03_build_fsa_school_panel.py`
-- **Unit of observation:** school × graduating class in the 15 study states (LA, IL, AL, TX, CO, MD, CA, IN, NH, NE, OK, NY, NJ, CT, PA), all sectors, classes 2015–2026.
+- **Unit of observation:** school × graduating class in the 15 study states (LA, IL, AL, MD, TX, CO, CA, IN, NH, NE, OK, NY, NJ, CT, PA), all sectors, classes 2015–2026.
 - **Key (unique):** `school_id`, `class_year`
 - **Built from:** `fsa_fafsa_hs.parquet` records with a code in `fsa_school_codes.parquet`, summed by school and class. Records in other states are left out here (the earlier FSA files keep every state). In the study states, records without a code are left out (2,111 records, 29,423 of 13.5 million completions: unlinked, ambiguous, rejected, and 30 network-level records). Unlinked second listings of a linked school (same class, city, candidate code, and matching name) are added to that school; network-level records (names ending in SCHOOLS or containing NETWORK) are not.
 
@@ -127,6 +127,7 @@ Hand-entered from statutes and agency reports (sources in each row and in `docs/
 |---|---|---|---|---|---|
 | `school_id` | string | — | Stable school ID (most recent NCES ID; `stable_ids` in `code/matching.py`); matches `fsa_school_panel.parquet` | derived | — |
 | `nces_id` | string | — | NCES ID that year | 029 `NCESSCH` | — |
+| `st_schid` | string | — | State's own school ID that year, as CCD reports it (e.g. `LA-001-001005`: state, state district code, state school code); links state data files to NCES IDs | 029 `ST_SCHID` | — |
 | `class_year` | int | year | Spring year of the school year (2014-15 → 2015); grade-12 counts are that graduating class's seniors | derived | — |
 | `state`, `name`, `lea_id`, `lea_name`, `city` | string | — | State, school name, district ID and name, physical city | 029 | — |
 | `school_type` | string | — | CCD school type as published | 029 `SCH_TYPE_TEXT` | — |
@@ -187,6 +188,7 @@ Deneault's controls also include school ACT, which is not yet in the data.
 
 - `sample_screens_by_state.csv` (from `code/05_build_analysis_panel.py`): treated public schools with post-mandate classes in each state, and how many remain after each screen in design order (cumulative), plus the number passing Deneault's screens.
 - `first_stage_by_state.csv` (from `code/06_first_stage.py`): one row per state and specification (`main`, `no_frl`, `deneault` for Louisiana), `controls` (`with_frl` or `no_frl`; Illinois's main uses `no_frl`): `beta` (coefficient on dose × post), `se` (clustered by school), `p`, `n_obs`, `n_schools`, `classes` (window), `mean_fcr_pre` (weighted mean completion rate before the mandate), `mean_dose`.
+- `reduced_form_by_state.csv` (from `code/08_reduced_form.py`): one row per state and specification, as the first stage, for states with pre and post outcome classes: `outcome` (`enroll` = `pct_enrolled` / 100; `penroll` for Louisiana's `deneault` spec), `window` (which enrollment rate), `beta`, `se`, `p`, `n_obs`, `n_schools`, `classes` (window classes with outcome data), `schools_first_stage_sample` (schools before requiring the outcome), `mean_y_pre` (weighted pre-mandate mean outcome), `mean_dose`, `fs_beta` / `fs_se` (first stage re-estimated on the same sample), `rf_fs_ratio` (`beta / fs_beta`, enrollment change per unit of FAFSA completion; no standard error).
 
 ## `<dataset>.parquet`
 
@@ -197,3 +199,65 @@ Deneault's controls also include school ACT, which is not yet in the data.
 | Variable | Type | Units | Definition | Source | Missing-value codes |
 |---|---|---|---|---|---|
 | | | | | | |
+
+
+## `data/derived/state_outcomes.parquet`
+
+Built by `code/07_build_state_outcomes.py`. One row per school × class in each state's college-going file (Louisiana, Illinois, Alabama, Maryland, Texas, California, Indiana, New Hampshire, Nebraska, Oklahoma, New York, New Jersey so far).
+
+- **Key (unique):** `state`, `class_year`, `code`
+- **Rates** are percents as published. A published bound (e.g. `>99`) is stored as its number, with its direction in the matching `*_bound` column (`>` lower bound, `<` upper bound, empty if exact).
+- **Breakdown names say their base:** `pct_of_enrolled_*` are shares of enrollees (LA); `pct_of_grads_*` are shares of all graduates (IL, AL). They are not comparable across states.
+
+| Variable | Type | Units | Definition | Source | Missing |
+|---|---|---|---|---|---|
+| `state` | string | — | Two-letter state code | — | — |
+| `class_year` | int | year | Graduating class (spring year). LA: file label "2015-2016 High School Graduates" = 2016. IL: report card year − 2 | state file | — |
+| `code` | string | — | State's school code: LA 6-character LDOE site code; IL 15-digit RCDTS (as written in the file); NE 9-digit county + district + school code of the CCD school matched by district and name (`NAME:<district>:<school>` if none); OK CCD county-district-site key (`01-I025-705`) of the school matched by county and name (`NAME:<county>:<school>` if none); NY 12-digit BEDS code (`ENTITY_CD`); NJ 9-digit county-district-school (CDS) code | state file | — |
+| `name` | string | — | School name in the state file | state file | — |
+| `school_id` | string | — | Stable school ID (as in the panels), via the state code in CCD `st_schid`: same year, else same code in any year; LA alias `031002` → `323002` (Grambling Lab); IL codes compared without the 2-digit type code | derived | not linked (LA 84, IL 53 rows, mostly small or alternative sites) |
+| `link` | string | — | `same_year`, `any_year`, or empty (not linked) | derived | — |
+| `window` | string | — | Which enrollment rate `pct_enrolled` is: `la_fall_oct31` (enrollment start by Oct 31 of the fall after graduation), `il_12m_sep30` (first enrollment by Sep 30 of the year after graduation), `al_fall_public_instate` (enrolled the fall after graduation at an Alabama public college; no private or out-of-state colleges), `md_within_1yr` (enrolled full- or part-time, any degree status, within one year of graduation; MHEC + NSC), `tx_fall_texas` (enrolled the fall after graduation at a Texas public or private college; THECB; 'not trackable' graduates count as not enrolled), `ca_12m_any` (enrolled at any U.S. college within 12 months of completing high school; CDE, NSC), `in_year_after` (enrolled at any NSC-participating college in the year after graduation; CHE), `nh_year_after` (% of graduates enrolling at a 2- or 4-year college within the year after graduation; NH DOE iExplore; a published rate), `ne_year_after` (on-time public graduates enrolled at any NSC college between June 1 after graduation and May 31 of the next year; CCPE), `ok_year_after_instate` (first-time enrollment at an Oklahoma public or private college in the fall after graduation or later that academic year; OSRHE; no out-of-state colleges), `ny_16m_any` (enrolled at any college, New York or out of state, within 16 months of graduation; NYSED Report Card), `nj_fall` (enrolled at any NSC college in the fall after graduation; NJDOE; lower bound of the published range) | derived | — |
+| `graduates` | float | students | High school graduates that school year (all graduates, not a 4-year cohort) | LA "Total HS Graduates"; AL ACHE "High School Graduates" (from ALSDE); MD MLDS "High School Graduates"; TX THECB "Total high school graduates"; CA CDE "High School Completers" (graduates plus non-graduate completers: CHSPE, GED, adult-education diploma); IN CHE "HSGrads"; NH iPlatform total completers (Completers By Status By School); NE CCPE "# On Time HS Grads" (on-time, 4 years or less, public graduates only); OK OSRHE "Number of Graduates" (public high schools; class 2013 on-time only); NY NYSED `TOTAL_GRAD_COUNT` (graduates of the calendar year) | IL (not published); LA `<10`; MD `*`; TX schools with 25 or fewer graduates are not listed |
+| `pct_enrolled` | float | percent | **The outcome:** % of the school's graduates enrolled in college in `window` (any U.S. 2- or 4-year college; LA: NSC, + Board of Regents from 2018; IL: NSC) | state file | suppressed |
+| `pct_enrolled_bound` | string | — | Bound direction of `pct_enrolled` | state file | — |
+| `enrolled` | float | students | LA, NH: `graduates × pct_enrolled / 100` (estimated); AL: published count (2-year + 4-year); MD: published within-one-year count; others: published counts | derived (LA), ACHE (AL), MLDS (MD) | IL; LA if either is missing; MD `*` |
+| `enrolled_immediate`, `pct_enrolled_immediate`, `enrolled_within_2yr`, `pct_enrolled_within_2yr` | float | students, percent | **MD:** immediate (full-time, degree-seeking, fall) and within-two-years enrollment counts and rates (÷ graduates). Not to be confused with `enrolled_2yr` (AL: enrolled at 2-year colleges) | MLDS | MD `*`; within two years not yet reported for class 2024; other states |
+| `enrolled_2yr`, `enrolled_4yr` | float | students | **AL:** graduates enrolled at Alabama public 2-year / 4-year colleges that fall | ACHE | LA, IL |
+| `pct_of_enrolled_2yr`, `pct_of_enrolled_4yr`, `pct_of_enrolled_instate` (+ `_bound`) | float | percent | **LA:** of enrollees, % at 2-year, at 4-year, in state | LA file | suppressed; IL |
+| `grad_rate`, `grad_rate_bound` | float, string | percent | **LA:** 4-year cohort graduation rate (classes 2014-2015 from the next year's School Performance Score file, 2016 on from the school graduation summaries) | LA files | not published; IL |
+| `penroll` | float | share | **LA only (replication):** Deneault's outcome, `(pct_enrolled/100) × (grad_rate/100)` with bounds at the midpoint of the bounded range (`>99` → 99.5, `<1` → 0.5, `>95` → 97.5, `<5` → 2.5) | derived | classes 2012-2013; either input missing; IL |
+| `pct_enrolled_16m` (+ `_bound`) | float | percent | **IL:** % of graduates with a first enrollment by Jan 31, two years after graduation (16-month rate). **NJ:** % of graduates enrolled at any point within 16 months of graduation (lower bound of the published range) | IL report card; NJDOE | suppressed; NJ classes 2024 on (not yet published); other states |
+| `pct_of_grads_public`, `pct_of_grads_private`, `pct_of_grads_4yr`, `pct_of_grads_2yr`, `pct_of_grads_trade` (+ `_bound`) | float | percent | **IL:** % of all graduates enrolled within 12 months at a public, private, 4-year, 2-year, or trade/vocational (less-than-2-year) institution; 4-year + 2-year + trade = public + private = `pct_enrolled`. **AL:** `pct_of_grads_2yr`, `pct_of_grads_4yr` = Alabama public 2-/4-year enrollees ÷ graduates | IL report card; AL derived from ACHE counts | IL classes before 2017; suppressed; LA |
+| `n_community_college` (+ `_bound`) | float | students | **IL:** number of graduates enrolled in community college | IL report card | outside classes 2017-2021; LA |
+| `source_file` | string | — | LA: raw file the row was read from; IL: `report card <year>` | — | — |
+| `not_found`, `not_trackable` | float | students | **TX:** graduates with a standard ID not found in Texas colleges that fall; graduates with a non-standard ID that cannot be matched (enrolled + not found + not trackable = graduates) | THECB | other states |
+| `pct_enrolled_trackable` | float | percent | **TX:** enrolled ÷ (graduates − not trackable) × 100 (robustness version of the outcome) | derived | other states |
+| `enrolled_instate`, `enrolled_outstate`, `enrolled_uc`, `enrolled_csu`, `enrolled_ccc`, `enrolled_instate_private`, `enrolled_outstate_4yr`, `enrolled_outstate_2yr` | float | students | **CA:** completers enrolled within 12 months in California / out of state; at UC, CSU, California community colleges, in-state private colleges; out-of-state 4-year and 2-year (in-state + out-of-state = enrolled; UC + CSU + CCC + private = in-state) | CDE | `*` (10 or fewer); other states |
+| `enrolled_in_public` | float | students | **IN:** graduates enrolled at an Indiana public college | CHE | `DS`/`NULL`/`***` (suppressed); other states |
+| `pct_enrolled_nde_oct15` | float | percent | **NE:** NDE's college-going % (enrolled on October 15 of the year after the first fall; previous Nebraska outcome), merged by class and code | NDE NEP | outside classes 2016-2023; suppressed (`*`, -1); other states |
+| `ccpe_match` | string | — | **NE:** how the CCPE school was matched to a CCD code: `exact_same_year`, `exact_any_year`, `words_same_year`, `words_any_year`, `only_hs_same_year`, `only_hs_any_year`, or empty (not matched: 73 rows, classes 2008-2014, schools closed or merged before CCD 2014-15) | derived | other states |
+| `enrolled_fall`, `pct_enrolled_fall` (+ `_bound`) | float | students, percent | **OK:** graduates entering an Oklahoma college directly in the fall after graduation, and % of graduates | OSRHE | other states |
+| `first_time_any_class` | float | students | **OK:** first-time students that academic year from the school, from any graduating class (direct and delayed) | OSRHE | other states |
+| `enrolled_outstate`, `pct_of_grads_outstate` (+ `_bound`) | float | students, percent | **OK:** graduates entering an out-of-state college for the first time during the following academic year, and % of graduates | OSRHE | classes before 2023; `.`; other states |
+| `county` | string | — | **OK:** county in the OSRHE file | OSRHE | other states |
+| `act_code` | string | — | **OK:** ACT high school code in the OSRHE file (not a state code) | OSRHE | classes from 2019; other states |
+| `name_match` | string | — | **OK:** how the school was matched to CCD (steps as `ccpe_match`); empty if not matched (22 rows) | derived | other states |
+| `enrolled_instate_public`, `enrolled_instate_private`, `enrolled_outstate`, `enrolled_2yr`, `enrolled_4yr` | float | students | **NY:** graduates enrolled within 16 months at a New York public, New York private, or out-of-state college; at a 2-year (incl. less than 2-year) or 4-year college (public + private + out of state = 2-year + 4-year = `enrolled`). Same names as AL (`enrolled_2yr`, `enrolled_4yr`: Alabama public colleges only), CA and OK (`enrolled_instate_private`, `enrolled_outstate`); compare across states with care | NYSED Report Card | `s` (suppressed); other states unless listed |
+
+## `data/derived/reduced_form_panel.parquet`
+
+- **Produced by:** `code/08_reduced_form.py`
+- **Unit of observation:** as `analysis_panel.parquet` (school × class); every panel column is kept.
+- **Key (unique):** `school_id`, `class_year`
+- **Merge:** left join of `state_outcomes.parquet` (linked rows only) on `state`, `class_year`, `school_id` (one to one); no panel rows added or dropped.
+
+| Variable | Type | Units | Definition | Source | Missing-value codes |
+|---|---|---|---|---|---|
+| `outcome_window` | string | — | `window` of the state outcome (which enrollment rate) | `state_outcomes` | no outcome for the school and class |
+| `pct_enrolled` | float | percent | The state's published college enrollment rate (`state_outcomes.pct_enrolled`) | `state_outcomes` | no outcome; suppressed |
+| `enroll` | float | share | `pct_enrolled / 100`, the reduced-form outcome | derived | as `pct_enrolled` |
+| `outcome_graduates` | float | students | `state_outcomes.graduates` (state graduate count where published) | `state_outcomes` | not published (IL, NJ); no outcome |
+| `penroll` | float | share | **LA:** Deneault's outcome (see `state_outcomes`) | `state_outcomes` | other states; LA classes before 2014 |
+| `outcome_link` | string | — | How the outcome row linked to CCD (`same_year`, `any_year`) | `state_outcomes` | no outcome |
+

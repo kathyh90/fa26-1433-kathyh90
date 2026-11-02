@@ -10,4 +10,6 @@ uv run --locked python code/03_build_fsa_school_panel.py   # school x class FSA 
 uv run --locked python code/04_build_ccd_school_panel.py   # CCD school characteristics, data/derived/ccd_school_panel.parquet
 uv run --locked python code/05_build_analysis_panel.py   # policy timing + first-stage analysis panel with sample flags, data/derived/policy_timing.parquet and analysis_panel.parquet
 uv run --locked python code/06_first_stage.py   # first stage by state, output/tables/first_stage_by_state.csv
+uv run --locked python code/07_build_state_outcomes.py   # college-going outcomes from state files, data/derived/state_outcomes.parquet
+uv run --locked python code/08_reduced_form.py   # outcomes merged onto the panel + reduced form by state, output/tables/reduced_form_by_state.csv
 uv run --locked pytest -q

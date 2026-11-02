@@ -1,6 +1,6 @@
 # State data requirements
 
-Applies to all 15 states (LA, IL, AL, TX, CO, MD, CA, IN, NH, NE, OK, NY, NJ, CT, PA). A state can enter the first-stage pool (FAFSA completion) without entering the reduced-form pool (college enrollment), so the must-haves are split by outcome.
+Applies to all 15 states (LA, IL, AL, MD, TX, CO, CA, IN, NH, NE, OK, NY, NJ, CT, PA). A state can enter the first-stage pool (FAFSA completion) without entering the reduced-form pool (college enrollment), so the must-haves are split by outcome.
 
 ## Must-have for the first stage (FAFSA completion)
 - ≥3 clean pre-mandate classes from class of 2015 onward in FSA data, excluding any partial-rollout year: the pre-mandate class one year before the mandate year is the reference period, kept out of the dose window; the two years before the reference period set the dose (pre-period FCR)
