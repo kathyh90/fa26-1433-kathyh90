@@ -11,5 +11,8 @@ uv run --locked python code/04_build_ccd_school_panel.py   # CCD school characte
 uv run --locked python code/05_build_analysis_panel.py   # policy timing + first-stage analysis panel with sample flags, data/derived/policy_timing.parquet and analysis_panel.parquet
 uv run --locked python code/06_first_stage.py   # first stage by state, output/tables/first_stage_by_state.csv
 uv run --locked python code/07_build_state_outcomes.py   # college-going outcomes from state files, data/derived/state_outcomes.parquet
-uv run --locked python code/08_reduced_form.py   # outcomes merged onto the panel + reduced form by state, output/tables/reduced_form_by_state.csv
+uv run --locked python code/08_reduced_form.py   # outcomes merged onto the panel + reduced form by state (incl. graduate denominator), output/tables/reduced_form_by_state.csv, first_stage_grad_by_state.csv, graduate_denominator_check.csv
+uv run --locked python code/09_summary_stats.py   # summary statistics of the first-stage and reduced-form samples, output/tables/summary_stats_{fs,rf}_by_*.csv
+uv run --locked python code/10_export_tables.py   # formatted Tables 1A/1B, 2, 3, 4 for the paper, output/tables/results_tables.html
+uv run --locked python code/11_event_study.py   # event study by state (dose x class) + pre-trend tests, output/tables/event_study_*.csv, output/figures/event_study_*.png
 uv run --locked pytest -q

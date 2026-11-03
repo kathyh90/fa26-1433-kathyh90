@@ -55,6 +55,7 @@ COVID = {2020, 2021}
 ROLLOUT_2024 = {2024}   # class affected by the delayed 2024-25 FAFSA
 SCREENS_TABLE = OUTPUT / "tables" / "sample_screens_by_state.csv"
 WINDOW = (-4, 1)   # Deneault's estimation window in event time (e = -4 ... +1)
+SENIOR_SHARE_MAX = 0.75   # seniors / grades 9-12 above this, in a school offering grade 9: not a graduating class
 VIRTUAL = {"yes", "full virtual", "exclusively virtual", "primarily virtual",
            "virtual with face to face options"}
 
@@ -238,12 +239,26 @@ def window_classes(df):
     return out
 
 
+def senior_heavy(df):
+    """True for school-years whose lowest grade is 9 or below but whose seniors are
+    more than SENIOR_SHARE_MAX of grades 9-12 (e.g. adult high schools that enroll
+    mostly 12th graders). Schools that start at grade 10 or 11 are never flagged."""
+    lo = df["gslo"].astype("string").str.strip().replace({"PK": "-1", "KG": "0"})
+    lo = pd.to_numeric(lo, errors="coerce")
+    grades = df[["enroll_g09", "enroll_g10", "enroll_g11", "enroll_g12"]].astype("Float64")
+    share = grades["enroll_g12"] / grades.sum(axis=1, min_count=1).where(lambda s: s > 0)
+    return ((lo <= 9) & (share > SENIOR_SHARE_MAX)).fillna(False).astype(bool)
+
+
 def add_flags(df):
     """Sample screens as booleans (school-level screens are constant within school)."""
     by = df.groupby("school_id")
     df["f_in_ccd"] = by["enroll_total"].transform(lambda s: s.notna().any())
     df["f_not_special_ed"] = ~by["school_type_std"].transform(lambda s: (s == "special_education").any())
-    df["f_regular"] = by["school_type_std"].transform(lambda s: s.dropna().eq("regular").all() and s.notna().any())
+    # Main screen (DECISIONS 2026-11-02): career/technical schools are full-time high
+    # schools with ordinary senior classes, so they stay; alternative schools do not.
+    df["f_regular_cte"] = by["school_type_std"].transform(
+        lambda s: s.dropna().isin(["regular", "career_technical"]).all() and s.notna().any())
     is_virtual = df["virtual"].fillna("").str.strip().str.lower().isin(VIRTUAL)
     df["f_not_virtual"] = ~is_virtual.groupby(df["school_id"]).transform("any")
     # Deneault drops schools whose 9th-grade cohort is ever 0 or missing; CCD
@@ -260,6 +275,9 @@ def add_flags(df):
     need = classes.map(lambda c: len(c) if isinstance(c, list) else 0)
     have = (df["in_window"] & df["fcr"].notna()).groupby(df["school_id"]).transform("sum")
     df["window_classes_needed"] = need
+    # Data-quality screen (DECISIONS 2026-11-02): window classes whose enrollment cannot
+    # describe a graduating class (years outside the window, e.g. a phase-out, do not count).
+    df["f_senior_share_ok"] = ~(senior_heavy(df) & df["in_window"]).groupby(df["school_id"]).transform("any")
     df["f_balanced"] = (need > 0) & (have == need)
     return df
 
@@ -269,7 +287,7 @@ def report(df):
     school = df.drop_duplicates("school_id").set_index("school_id")
     school = school[school["treated"] & (school["n_post_classes"] > 0)]
     deneault = ["f_in_ccd", "f_not_special_ed", "f_cohort9_positive", "f_ratio_ok", "f_dose_ok", "f_balanced"]
-    design = ["f_in_ccd", "f_regular", "f_not_virtual", "f_cohort9_positive", "f_ratio_ok", "f_dose_ok", "f_balanced"]
+    design = ["f_in_ccd", "f_regular_cte", "f_not_virtual", "f_senior_share_ok", "f_ratio_ok", "f_dose_ok", "f_balanced"]
     rows = []
     for st, g in school.groupby("state"):
         row = {"state": st, "treated public schools": len(g)}

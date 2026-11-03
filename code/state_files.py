@@ -1031,6 +1031,36 @@ def nj_postsecondary():
                 "pct_enrolled_16m_bound", "file"]]
 
 
+NJ_ACGR = RAW / "NJ" / "njdoe_acgr"
+
+
+def nj_acgr_graduates():
+    """NJDOE 4-year adjusted cohort graduation rate files, one per cohort (= class),
+    school rows of the all-students group ('Total'; 'All Students' from cohort 2025):
+    `graduates` = 4-year cohort graduates with a state-endorsed diploma (state
+    calculation), `cohort_count` = adjusted cohort, `grad_rate` (percent). School
+    code 888 marks district totals (dropped). '*' (privacy) and 'N' (none) are
+    missing. `code` = CDS (county 2 + district 4 + school 3 digits), as in nj_postsecondary."""
+    frames = []
+    for f in sorted(NJ_ACGR.glob("Cohort*.xlsx")):
+        d = pd.read_excel(f, header=None, dtype=str)
+        hdr = d.index[d[0].astype(str).str.strip() == "County Code"][0]
+        d.columns = [" ".join(str(c).split()) for c in d.loc[hdr]]
+        d = d.loc[hdr + 1:]
+        d = d[d["Student Group"].str.strip().isin(["Total", "All Students"])
+              & d["School Code"].notna() & ~d["School Code"].isin(["888", "999"])]
+        col = lambda key: next(c for c in d.columns if key in c)
+        frames.append(pd.DataFrame({
+            "class_year": int(re.search(r"Cohort(\d{4})", f.name)[1]),
+            "code": d["County Code"].str.zfill(2) + d["District Code"].str.zfill(4) + d["School Code"].str.zfill(3),
+            "name": d["School Name"],
+            "graduates": pd.to_numeric(d["Graduated"], errors="coerce"),
+            "cohort_count": pd.to_numeric(d[col("Cohort Count")], errors="coerce"),
+            "grad_rate": pd.to_numeric(d[col("Graduation Rate")], errors="coerce"),
+            "file": f.name}))
+    return pd.concat(frames, ignore_index=True)
+
+
 # ---------------------------------------------------------------------------
 # Content review (run as a script)
 # ---------------------------------------------------------------------------
@@ -1075,7 +1105,7 @@ READERS = {
     "NE": {"ccpe_continuation": ne_ccpe_continuation, "nde_nep": ne_college_going},
     "OK": {"osrhe_hs_indicators": ok_college_going},
     "NY": {"nysed_downloads": ny_postsecondary},
-    "NJ": {"njdoe_postsecondary": nj_postsecondary},
+    "NJ": {"njdoe_postsecondary": nj_postsecondary, "njdoe_acgr": nj_acgr_graduates},
 }
 # Per-state options for link(): code aliases and code normalizers.
 LINK_OPTIONS = {"LA": {"aliases": LA_ALIASES}, "IL": {"normalize": il_code}, "AL": {"ccd_key": AL_CCD_KEY},

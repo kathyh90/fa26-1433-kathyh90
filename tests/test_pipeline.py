@@ -6,6 +6,7 @@ Tests that read a derived file are skipped until the script that writes it has r
 import importlib.util
 import re
 import sys
+from io import StringIO
 from pathlib import Path
 
 import duckdb
@@ -572,6 +573,15 @@ class TestAnalysisPanel:
 
 # --- code/06_first_stage.py: first-stage sample and output -------------------
 
+class TestSeniorShareScreen:
+    def test_senior_heavy_rule(self):
+        """Flagged only when the lowest grade is 9 or below and seniors exceed 75% of grades 9-12."""
+        d = pd.DataFrame({"gslo": ["09", "11", "KG", "09", "09"],
+                          "enroll_g09": [1, 0, 30, 25, 0], "enroll_g10": [0, 0, 30, 25, 0],
+                          "enroll_g11": [2, 100, 30, 25, 0], "enroll_g12": [500, 100, 30, 25, 0]})
+        assert analysis_panel.senior_heavy(d).tolist() == [True, False, False, False, False]
+
+
 class TestFirstStage:
     needs_results = needs(first_stage.OUT, "06_first_stage.py")
 
@@ -727,7 +737,8 @@ class TestStateOutcomes:
     @needs_outcomes
     def test_new_jersey_outcomes(self):
         """New Jersey: fall rate classes 2019-2024 and 16-month 2018-2023 (lower
-        bounds, 0-100); 9-digit CDS codes; every row links; no counts."""
+        bounds, 0-100); 9-digit CDS codes; every row links; graduates from the
+        adjusted cohort graduation files (classes 2020-2025)."""
         d = pd.read_parquet(state_outcomes.OUT)
         nj = d[d["state"] == "NJ"]
         assert set(nj["window"]) == {"nj_fall"} and nj["code"].str.fullmatch(r"\d{9}").all()
@@ -735,7 +746,21 @@ class TestStateOutcomes:
         assert set(nj.dropna(subset=["pct_enrolled"])["class_year"]) >= set(range(2019, 2025))
         assert nj.dropna(subset=["pct_enrolled_16m"])["class_year"].min() == 2018
         assert nj[["pct_enrolled", "pct_enrolled_16m"]].stack().dropna().between(0, 100).all()
-        assert nj["school_id"].notna().all() and nj["graduates"].isna().all()
+        assert nj["school_id"].notna().all()
+        assert nj.loc[nj["class_year"] < 2020, "graduates"].isna().all()
+        assert nj.loc[nj["class_year"].between(2020, 2025), "graduates"].notna().mean() > 0.95
+
+    @pytest.mark.skipif(not state_files.NJ_ACGR.exists(), reason="run code/00_download_raw_data.py NJ first")
+    def test_new_jersey_graduate_counts(self):
+        """NJDOE adjusted cohort graduation files: one all-students school row per class
+        and CDS code (no district 888 rows), classes 2020-2025, graduates <= cohort,
+        and graduates / cohort reproduces the published rate."""
+        g = state_files.nj_acgr_graduates()
+        assert set(g["class_year"]) >= set(range(2020, 2026)) and not g.duplicated(["class_year", "code"]).any()
+        assert g["code"].str.fullmatch(r"\d{9}").all() and not g["code"].str.endswith("888").any()
+        both = g.dropna(subset=["graduates", "cohort_count", "grad_rate"])
+        assert (both["graduates"] <= both["cohort_count"]).all()
+        assert ((both["graduates"] / both["cohort_count"] * 100 - both["grad_rate"]).abs() < 0.1).all()
 
     @needs_outcomes
     def test_new_york_outcomes(self):
@@ -784,7 +809,7 @@ class TestStateOutcomes:
         il = d[d["state"] == "IL"]
         assert set(il["window"]) == {"il_12m_sep30"} and set(la["window"]) == {"la_fall_oct31"}
         assert il["class_year"].min() == 2013 and il["class_year"].max() >= 2024
-        assert il["pct_enrolled"].dropna().between(0, 100).all() and il["graduates"].isna().all()
+        assert il["pct_enrolled"].dropna().between(0, 100).all()
         al = d[d["state"] == "AL"]
         assert set(al["window"]) == {"al_fall_public_instate"} and al["class_year"].min() == 2012
         assert (al["enrolled"] <= al["graduates"]).all() and al["school_id"].notna().mean() > 0.95
@@ -835,14 +860,166 @@ class TestReducedForm:
         r = d.dropna(subset=["enroll"])
         assert ((r["enroll"] - r["pct_enrolled"] / 100).abs() < 1e-12).all() and r["enroll"].between(0, 1).all()
 
+    @staticmethod
+    def covered_states(cols):
+        """Rule for which states can be estimated, computed from the merged panel
+        independently of step 8's sampling code: a state not excluded whose treated
+        window rows have every column in `cols` in at least one pre-mandate and one
+        post-mandate class. Grows by itself as new data arrive."""
+        p = pd.read_parquet(reduced_form.PANEL_OUT, columns=["state", "treated", "in_window", "post", *cols])
+        p = p[p["treated"] & p["in_window"] & p[cols].notna().all(axis=1)]
+        both = p.groupby("state")["post"].agg(lambda x: x.any() and not x.all())
+        return set(both[both].index) - set(first_stage.EXCLUDE_STATES)
+
     @needs_rf
     def test_states_with_post_outcomes_only(self):
-        """Every state with a post-period outcome class is estimated; OK, NY, NJ
-        (no post-period outcome) and CO (excluded) are not; LA has Deneault's spec."""
+        """Exactly the states whose outcome covers a pre and a post window class are
+        estimated (excluded states never are); LA has Deneault's spec."""
         out = pd.read_csv(reduced_form.OUT)
-        assert {"LA", "IL", "AL", "MD", "TX", "CA", "IN", "NH", "NE"} <= set(out["state"])
-        assert not set(out["state"]) & {"OK", "NY", "NJ", "CO"}
+        assert set(out["state"]) == self.covered_states(["enroll"])
+        assert not set(out["state"]) & set(first_stage.EXCLUDE_STATES)
         la = out[(out["state"] == "LA") & (out["spec"] == "deneault")]
         assert len(la) == 1 and la["outcome"].iloc[0] == "penroll"
         assert (out["n_schools"] <= out["schools_first_stage_sample"]).all() and (out["se"] > 0).all()
 
+    def test_attrition_splits_no_outcome_and_partial(self):
+        """Counted only over classes with outcome data: a school with none is
+        `no_outcome`, one missing some is `partial`, complete schools are not counted."""
+        d = pd.DataFrame({"school_id": list("aabbcc"), "class_year": [2019, 2020] * 3,
+                          "enroll": [0.5, 0.6, None, None, 0.4, None]})
+        assert reduced_form.attrition(d, "enroll") == {"dropped_no_outcome": 1, "dropped_partial_outcome": 1}
+
+    @needs_rf
+    def test_attrition_accounts_for_every_dropped_school(self):
+        """First-stage schools = reduced-form schools + the two dropped counts."""
+        out = pd.read_csv(reduced_form.OUT)
+        dropped = out["dropped_no_outcome"] + out["dropped_partial_outcome"]
+        assert (out["schools_first_stage_sample"] - out["n_schools"] == dropped).all()
+
+    def test_graduate_denominator_rules(self):
+        """fcr = completions / graduates, capped at 1; dose needs both dose classes;
+        window classes without any graduate count in the state leave the window."""
+        d = pd.DataFrame({"state": "LA", "school_id": ["a"] * 4 + ["b"] * 4, "class_year": [2015, 2016, 2017, 2018] * 2,
+                          "dose_class_1": 2015, "dose_class_2": 2016, "in_window": True,
+                          "completed_jun": [40, 60, 50, 10, 30, 30, 20, 10],
+                          "outcome_graduates": [80, 50, 100, None, 60, None, 40, None]})
+        g = reduced_form.with_graduate_denominator(d).set_index(["school_id", "class_year"])
+        assert g.loc[("a", 2015), "fcr"] == 0.5 and g.loc[("a", 2016), "fcr"] == 1.0  # 60/50 capped
+        assert g.loc[("a", 2015), "dose"] == 0.25 and pd.isna(g.loc[("b", 2015), "dose"])  # b lacks 2016
+        assert not g.loc[("a", 2018), "in_window"] and g.loc[("a", 2017), "in_window"]
+
+    @needs_rf
+    def test_graduate_denominator_outputs(self):
+        """The graduate first stage runs exactly where graduate counts cover a pre and a
+        post window class; its reduced form where the outcome does too; on schools
+        within the baseline main sample; the check table covers those states."""
+        out = pd.read_csv(reduced_form.OUT).set_index(["state", "spec"])
+        grad = out.xs("grad_denom", level="spec")
+        fs_states = self.covered_states(["outcome_graduates"])
+        fsg = pd.read_csv(reduced_form.OUT_FS_GRAD)
+        assert set(fsg["state"]) == fs_states and (fsg["se"] > 0).all()
+        assert set(grad.index) == fs_states & self.covered_states(["outcome_graduates", "enroll"])
+        assert (grad["schools_first_stage_sample"] <= out.xs("main", level="spec").loc[grad.index, "schools_first_stage_sample"]).all()
+        chk = pd.read_csv(reduced_form.OUT_GRAD_CHECK)
+        assert set(grad.index) <= set(chk["state"]) and chk["ratio"].between(0.5, 1.5).all()
+
+
+# --- code/09_summary_stats.py: summary statistics of the reduced-form sample --
+
+
+summary_stats = load("summary_stats", "09_summary_stats.py")
+
+
+class TestSummaryStats:
+    needs_ss = needs(summary_stats.OUT_RF_STATE, "09_summary_stats.py")
+
+    def test_school_means_use_pre_classes_and_locale_codes(self):
+        """Post classes are ignored; locale 1x = city, 4x = rural; missing locale stays missing."""
+        d = pd.DataFrame({"state": "LA", "school_id": ["a", "a", "a", "b"], "post": [False, False, True, False],
+                          "locale": ["11", "11", "41", None], "charter": [True, True, True, None]})
+        for c in set(summary_stats.VARS) - set(summary_stats.LOCALES) - {"charter"}:
+            d[c] = [1.0, 3.0, 100.0, 5.0]
+        m = summary_stats.school_means(d).set_index("school_id")
+        assert m.loc["a", "enroll"] == 2.0 and m.loc["a", "city"] == 1.0 and m.loc["a", "rural"] == 0.0
+        assert m.loc["a", "charter"] == 1.0 and pd.isna(m.loc["b", "city"]) and pd.isna(m.loc["b", "charter"])
+
+    @needs_ss
+    def test_counts_match_reduced_form_main(self):
+        """School counts by state equal the reduced form's main-spec n_schools, and
+        the dose quartiles split the same schools into four near-equal groups."""
+        rf = pd.read_csv(reduced_form.OUT).query("spec == 'main'").set_index("state")["n_schools"]
+        s = pd.read_csv(summary_stats.OUT_RF_STATE).query("variable == 'n_schools'").drop(columns=["variable", "stat"])
+        assert s[rf.index].iloc[0].astype(int).to_dict() == rf.to_dict() and s["All"].iloc[0] == rf.sum()
+        q = pd.read_csv(summary_stats.OUT_RF_DOSE).query("variable == 'n_schools'")
+        assert q["All"].iloc[0] == rf.sum() and q[["Q1", "Q2", "Q3", "Q4"]].iloc[0].between(0.24 * rf.sum(), 0.26 * rf.sum()).all()
+
+    @needs_ss
+    def test_first_stage_counts_match_first_stage_main(self):
+        """First-stage-sample school counts by state equal the first stage's main-spec n_schools."""
+        fs = pd.read_csv(first_stage.OUT).query("spec == 'main'").set_index("state")["n_schools"]
+        s = pd.read_csv(summary_stats.OUT_FS_STATE).query("variable == 'n_schools'")
+        assert s[fs.index].iloc[0].astype(int).to_dict() == fs.to_dict() and s["All"].iloc[0] == fs.sum()
+
+
+
+# --- code/10_export_tables.py: formatted results tables -----------------------
+
+
+export_tables = load("export_tables", "10_export_tables.py")
+
+
+class TestExportTables:
+    def test_cell_formats(self):
+        """Stars at the 10/5/1% cutoffs, SE on the next line, counts as whole numbers."""
+        assert [export_tables.stars(p) for p in [0.2, 0.09, 0.04, 0.009]] == ["", "*", "**", "***"]
+        assert export_tables.coef(0.1234, 0.0456, 0.03) == "0.123**<br>(0.046)"
+        assert export_tables.count(77.0) == "77" and export_tables.num(1234.4) == "1,234" and export_tables.num(float("nan")) == ""
+
+    @needs(export_tables.OUT, "10_export_tables.py")
+    def test_every_estimated_state_appears(self):
+        """Each state in the first-stage and reduced-form CSVs has a row in Tables 2 and 3,
+        and a column in Table 1A (first-stage sample) and 1B (reduced-form sample)."""
+        html = export_tables.OUT.read_text(encoding="utf-8")
+        tables = {h.split(".")[0]: pd.read_html(StringIO(t))[0]
+                  for h, t in re.findall(r"<h2>(.*?)</h2>(<table>.*?</table>)", html)}
+        t1a, t1, t2, t3 = (tables[k] for k in ["Table 1A", "Table 1B", "Table 2", "Table 3"])
+        fs, rf = (pd.read_csv(export_tables.TABLES / f) for f in ["first_stage_by_state.csv", "reduced_form_by_state.csv"])
+        names = export_tables.STATE_NAMES
+        assert {names[s] for s in fs["state"]} <= set(t2["State"]) and {names[s] for s in rf["state"]} <= set(t3["State"])
+        assert set(rf["state"]) <= set(t1.columns) and set(fs["state"]) <= set(t1a.columns)
+
+
+# --- code/11_event_study.py: event study and pre-trend tests -------------------
+
+
+event_study = load("event_study", "11_event_study.py")
+
+
+class TestEventStudy:
+    def test_regressor_names(self):
+        """Event-time regressors are named by sign and distance: e = -3 -> es_m3, e = 0 -> es_p0."""
+        assert [event_study.es_name(k) for k in [-3, 0, 2]] == ["es_m3", "es_p0", "es_p2"]
+
+    def test_recovers_known_dynamics(self):
+        """On simulated data with y = 0.2 * dose * post + noise-free FE, beta_k = 0 before e = 0 and 0.2 after."""
+        rows = [{"school_id": f"s{i}", "class_year": 2018 + t, "e": t - 3, "dose": i / 10, "weight": 1.0, "x": (i * t) % 3,
+                 "y": 0.1 * i + 0.01 * t + 0.2 * (i / 10) * (t >= 3)} for i in range(10) for t in range(6)]
+        coefs, tests = event_study.event_study(pd.DataFrame(rows), ["x"], "y")
+        b = coefs.set_index("e")["beta"]
+        assert b[[-3, -2, -1]].abs().max() < 1e-8 and (b[[0, 1, 2]] - 0.2).abs().max() < 1e-8
+        assert set(tests["test"]) == {"pre_all", "pre_no_dose"}
+
+    @needs(event_study.OUT_COEF, "11_event_study.py")
+    def test_outputs(self):
+        """Every main (and graduate-denominator) first-stage state has a FAFSA event study; the reference class is 0 with
+        no SE; pre_no_dose tests only classes at or before e = -4."""
+        c, t = pd.read_csv(event_study.OUT_COEF), pd.read_csv(event_study.OUT_TEST)
+        fs = set(pd.read_csv(first_stage.OUT).query("spec == 'main'")["state"])
+        assert fs == set(c.query("spec == 'main' and outcome == 'fcr'")["state"])
+        grad = set(pd.read_csv(reduced_form.OUT_FS_GRAD)["state"])
+        assert grad == set(c.query("spec == 'grad_denom' and outcome == 'fcr'")["state"])
+        ref = c[c["e"] == event_study.REF]
+        assert (ref["beta"] == 0).all() and (ref["se"] == 0).all()
+        assert len(ref) == c.groupby(["state", "spec", "outcome"]).ngroups
+        e = t.query("test == 'pre_no_dose'")["classes"].dropna().str.split(",").explode().astype(int)
+        assert (e <= -4).all()

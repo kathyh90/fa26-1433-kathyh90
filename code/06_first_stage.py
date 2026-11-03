@@ -15,10 +15,13 @@ The denominator is CCD grade-12 enrollment until state graduate counts are
 added, so these estimates are preliminary.
 
 Specifications:
-  main         project-design screens; controls: race shares, enrollment and
-               its square (per 1,000), FRL share
+  main         project-design screens (regular or career/technical, not virtual,
+               ...); controls: race shares, enrollment and its square (per
+               1,000), FRL share
   no_frl       as main without the FRL share (Deneault's controls minus ACT)
-  deneault     Louisiana only: Deneault's screens and controls (minus ACT)
+  deneault     Deneault's screens (drops only special education; keeps
+               alternative and virtual schools) and controls (minus ACT), every
+               state; vs. no_frl it differs only in the screens (robustness)
 
 Colorado is left out (EXCLUDE_STATES) until its design is decided. In states
 listed in NO_FRL_STATES, main drops the FRL share because a window class has
@@ -43,7 +46,7 @@ EXCLUDE_STATES = {"CO"}   # put Colorado back by removing it here
 # Main spec without FRL where a window class lacks FRL data. Revisit IL with
 # FRL from the Illinois Report Card (state data, step 4).
 NO_FRL_STATES = {"IL"}
-DESIGN_SCREENS = ["f_in_ccd", "f_regular", "f_not_virtual", "f_cohort9_positive", "f_ratio_ok",
+DESIGN_SCREENS = ["f_in_ccd", "f_regular_cte", "f_not_virtual", "f_senior_share_ok", "f_ratio_ok",
                   "f_dose_ok", "f_balanced"]
 DENEAULT_SCREENS = ["f_in_ccd", "f_not_special_ed", "f_cohort9_positive", "f_ratio_ok",
                     "f_dose_ok", "f_balanced"]
@@ -93,8 +96,6 @@ def main():
         if st in EXCLUDE_STATES:
             continue
         for spec, (screens, controls) in SPECS.items():
-            if spec == "deneault" and st != "LA":
-                continue
             if spec == "main" and st in NO_FRL_STATES:
                 controls = BASE_CONTROLS
             d = sample(df[df["state"] == st], screens, controls)

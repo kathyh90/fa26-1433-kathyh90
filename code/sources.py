@@ -698,6 +698,10 @@ NJ_BASE = "https://www.nj.gov/education/sprreports/download/"
 NJ_YEARS = [f"{y}-{y + 1}" for y in range(2015, 2025)]  # 2015-2016 ... 2024-2025
 # Postsecondary enrollment trend files (from 2023-24 no longer in the SPR database).
 NJ_ADDDATA = "https://www.nj.gov/education/spr/adddata"
+# 4-year adjusted cohort graduation rates with school cohort and graduate counts,
+# one file per cohort (by student group; cohorts 2020 on match the pattern).
+NJ_ACGR_PAGE = f"{NJ_ADDDATA}/acgr.shtml"
+NJ_ACGR_PATTERN = r"^Cohort20\d\d_4YearAdjustedCohortGraduationRates(andCounts)?byStudentGroup\.xlsx$"
 
 
 def new_jersey():
@@ -716,8 +720,11 @@ def new_jersey():
                 "NJ", "njdoe_spr", f"{year}_{name}",
                 f"{NJ_BASE}Documents/{year}/{name}", year, "docs", optional=True,
             ))
-    return sources + scraped("NJ", "njdoe_postsecondary", NJ_ADDDATA, r"Postsecondary.*\.xlsx$",
-                             note="fall and 16-month college enrollment rates by school, five classes per file")
+    return (sources
+            + scraped("NJ", "njdoe_postsecondary", NJ_ADDDATA, r"Postsecondary.*\.xlsx$",
+                      note="fall and 16-month college enrollment rates by school, five classes per file")
+            + scraped("NJ", "njdoe_acgr", NJ_ACGR_PAGE, NJ_ACGR_PATTERN,
+                      note="4-year ACGR by school and student group, with cohort and graduated counts"))
 
 
 # ---------------------------------------------------------------------------
@@ -1161,10 +1168,12 @@ CATALOG = [
      "postsecondary enrollment (16 months) for classes 2021-2024, in Report Cards 2022-2025 (Access)"),
     # New Jersey
     ("NJ", "grad_rate; act_sat; college_enroll", "NJDOE School Performance Reports", "njdoe_spr",
-     "2015-16 to 2024-25", "listed", "scripted", "graduate counts to be checked in the files"),
+     "2015-16 to 2024-25", "listed", "scripted", "no graduate counts here (cohort profile is %); counts are in njdoe_acgr"),
     ("NJ", "college_enroll", "NJDOE SPR Additional Data (postsecondary trends)", "njdoe_postsecondary",
      "fall: classes 2019-2024; 16-month: 2018-2023", "page scrape", "scripted",
      "rates only (NSC-matched share, published as a range); SPR database has none from 2023-24"),
+    ("NJ", "graduates; grad_rate", "NJDOE SPR Additional Data (adjusted cohort graduation rates)", "njdoe_acgr",
+     "cohorts 2020-2025", "page scrape", "scripted", "4-year cohort graduates (state calculation) and cohort counts by school; FAFSA graduate denominator"),
     # Connecticut
     ("CT", "college_enroll", "P20 WIN (data.ct.gov)", "ct_open_data", "per dataset", "Socrata CSV", "scripted", ""),
     ("CT", "grad_rate; act_sat", "CSDE (data.ct.gov)", "ct_open_data", "per dataset", "Socrata CSV", "scripted",

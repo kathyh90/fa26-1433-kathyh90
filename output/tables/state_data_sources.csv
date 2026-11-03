@@ -43,8 +43,9 @@ OK,act_sat,OSRHE High School Indicators,osrhe_hs_indicators,2018-2024,page scrap
 OK,graduates; college_enroll,OSRHE High School Indicators,osrhe_hs_indicators,2009-2024,page scrape,partial,in-state colleges only (out-of-state from class 2023); no school number; read from class 2013
 OK,grad_rate,OSDE,,,,not_found,
 NY,graduates; grad_rate; college_enroll; enrollment_race,NYSED,nysed_downloads,per data.nysed.gov,page scrape,scripted,"postsecondary enrollment (16 months) for classes 2021-2024, in Report Cards 2022-2025 (Access)"
-NJ,grad_rate; act_sat; college_enroll,NJDOE School Performance Reports,njdoe_spr,2015-16 to 2024-25,listed,scripted,graduate counts to be checked in the files
+NJ,grad_rate; act_sat; college_enroll,NJDOE School Performance Reports,njdoe_spr,2015-16 to 2024-25,listed,scripted,no graduate counts here (cohort profile is %); counts are in njdoe_acgr
 NJ,college_enroll,NJDOE SPR Additional Data (postsecondary trends),njdoe_postsecondary,fall: classes 2019-2024; 16-month: 2018-2023,page scrape,scripted,"rates only (NSC-matched share, published as a range); SPR database has none from 2023-24"
+NJ,graduates; grad_rate,NJDOE SPR Additional Data (adjusted cohort graduation rates),njdoe_acgr,cohorts 2020-2025,page scrape,scripted,4-year cohort graduates (state calculation) and cohort counts by school; FAFSA graduate denominator
 CT,college_enroll,P20 WIN (data.ct.gov),ct_open_data,per dataset,Socrata CSV,scripted,
 CT,grad_rate; act_sat,CSDE (data.ct.gov),ct_open_data,per dataset,Socrata CSV,scripted,accountability indicators; graduate counts are on EdSight (not scripted)
 PA,graduates; grad_rate,PDE,pde_graduation,2012-13 to 2024-25,page scrape,scripted,graduates file has post-graduate plans

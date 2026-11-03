@@ -37,7 +37,10 @@ docs/source-notes.md):
   NJ  nj_fall        enrolled at any college (NSC) in the fall after graduation;
                      denominator = graduates September-August; the published
                      range's lower bound (NSC-matched share); the 16-month rate
-                     is kept (pct_enrolled_16m); rates only, no counts
+                     is kept (pct_enrolled_16m); rates only. `graduates` here are
+                     4-year cohort graduates from NJDOE's adjusted cohort
+                     graduation files (classes 2020-2025), for the FAFSA graduate
+                     denominator; class 2025 rows have graduates but no rate yet
 Both are shares of all of the school's graduates that year. Breakdowns are
 kept with names that say their base, since states differ:
   pct_of_enrolled_*  shares of enrollees (LA: 2-year, 4-year, in state)
@@ -69,7 +72,7 @@ Usage (from the repository root):
 import pandas as pd
 
 from config import DERIVED
-from state_files import (NJ_CCD_KEY, nj_postsecondary, ny_postsecondary, OK_CCD_KEY, ok_college_going, ne_ccpe_continuation, ne_college_going, nh_code, nh_postsecondary, in_college_going, ca_college_going, tx_thecb_enrollment, AL_CCD_KEY, LA_ALIASES, MD_ALIASES, MD_CCD_KEY, al_ache_enrollment, md_college_enrollment, ccd_codes, il_code, il_college_enrollment,
+from state_files import (NJ_CCD_KEY, nj_acgr_graduates, nj_postsecondary, ny_postsecondary, OK_CCD_KEY, ok_college_going, ne_ccpe_continuation, ne_college_going, nh_code, nh_postsecondary, in_college_going, ca_college_going, tx_thecb_enrollment, AL_CCD_KEY, LA_ALIASES, MD_ALIASES, MD_CCD_KEY, al_ache_enrollment, md_college_enrollment, ccd_codes, il_code, il_college_enrollment,
                          la_college_enrollment, la_grad_rates, link, midpoint)
 
 OUT = DERIVED / "state_outcomes.parquet"
@@ -291,11 +294,27 @@ def new_york(ccd):
 def new_jersey(ccd):
     """New Jersey, fall rate classes 2019-2024, 16-month rate 2018-2023 (no
     post-period class yet: class 2025 is expected in the next NJDOE trend file):
-    NJDOE's published rates by school (no graduate or enrollee counts)."""
+    NJDOE's published rates by school (no enrollee counts). The trend files have
+    no graduate counts, so `graduates` (and `cohort_count`, `grad_rate`) come from
+    NJDOE's 4-year adjusted cohort graduation files, classes 2020-2025, outer-joined
+    by class and CDS code: 4-year cohort graduates, not all graduates of the year
+    (the rate's denominator). Rows with graduates but no rate (e.g. class 2025)
+    are kept for the graduate-denominator first stage."""
     d = nj_postsecondary()
     print(f"  NJ postsecondary trends: {len(d):,} school rows read, classes {d['class_year'].min()}-{d['class_year'].max()}")
-    d = linked("NJ", d, ccd, "NJ postsecondary trends", ccd_key=NJ_CCD_KEY)
-    return d.assign(state="NJ", window="nj_fall")
+    g = nj_acgr_graduates()
+    print(f"  NJ adjusted cohort graduation files: {len(g):,} school rows read, classes "
+          f"{g['class_year'].min()}-{g['class_year'].max()}")
+    n0 = len(d)
+    d = d.merge(g.rename(columns={"name": "name_acgr", "file": "file_acgr"}), on=["class_year", "code"],
+                how="outer", validate="1:1", indicator=True)
+    print(f"  outer join on class x code: {n0:,} rate rows + {len(g):,} graduate rows -> {len(d):,} rows "
+          f"(both {(d['_merge'] == 'both').sum():,}; rate only {(d['_merge'] == 'left_only').sum():,}, mostly "
+          f"classes 2018-2019; graduates only {(d['_merge'] == 'right_only').sum():,}, mostly class 2025)")
+    d["name"] = d["name"].fillna(d.pop("name_acgr"))
+    d["file"] = d["file"].fillna(d.pop("file_acgr"))
+    d = linked("NJ", d.drop(columns="_merge"), ccd, "NJ rates + graduates", ccd_key=NJ_CCD_KEY)
+    return d.assign(state="NJ", window="nj_fall")   # the state's measure, also on rows without a rate yet (as suppressed rows elsewhere)
 
 
 def main():
