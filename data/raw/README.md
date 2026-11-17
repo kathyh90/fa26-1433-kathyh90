@@ -21,3 +21,5 @@ Louisiana TOPS eligibility and recipients by high school are public (PDF) and do
 ## Replication package
 
 `replication/deneault_2023/` holds Deneault (2023) code and README from openICPSR project 161021 V1, downloaded manually because openICPSR requires a login. Its `Raw-Data` folder, which includes files LDOE no longer posts (e.g. the class of 2013 ACT file), has not been added yet.
+
+The published paper is `replication/deneault_2023/deneault-2023-college-enrollment-and-mandatory-fafsa-applications-evidence-from-louisiana.pdf`: Deneault, C. (2023), "College Enrollment and Mandatory FAFSA Applications: Evidence from Louisiana," *American Economic Journal: Economic Policy* 15(3). Added manually by the user on 2026-11-08 for reference (publisher copy, not redistributable; kept out of Git with the rest of `data/raw/`). Figure 2 (event study) is on p. 477.

@@ -22,6 +22,14 @@ school_id follows matching.stable_ids (code/matching.py), so it matches fsa_scho
 
 Writes data/derived/ccd_school_panel.parquet (key: school_id, class_year).
 
+Also writes data/derived/ccd_grade9.parquet (key: school_id, class_year): grade-9
+enrollment for class years 2012-2025, so step 5 can form the 9th-grade cohort
+(grade 9 three years earlier) from the class of 2015 on. Class years 2012-2014
+(school years 2011-12 to 2013-14) come from the older CCD school universe files
+(sc111a_supp, sc122a, sc132a: one tab-separated file per year, column G09, open
+schools by STATUS 1/3/4/5/8, the same statuses as OPEN_STATUSES); later years
+come from the panel above.
+
 Usage (from the repository root):
     uv run --locked python code/04_build_ccd_school_panel.py
 """
@@ -42,6 +50,9 @@ CCD_DIR = RAW / "US" / "nces_ccd_school"
 EDGE_DIR = RAW / "US" / "nces_edge_locations"
 OUT = DERIVED / "ccd_school_panel.parquet"
 FIRST_YEAR, LAST_YEAR = 2015, 2025   # class years (spring of 2014-15 ... 2024-25)
+G9_OUT = DERIVED / "ccd_grade9.parquet"
+G9_FIRST_YEAR = 2012   # grade 9 in 2011-12 is the 9th-grade cohort of the class of 2015
+UNIVERSE_OPEN = {"1", "3", "4", "5", "8"}   # universe-file STATUS codes matching OPEN_STATUSES
 CHUNK = 500_000
 RACES = {"AM": "american_indian", "AS": "asian", "HI": "hispanic", "BL": "black",
          "WH": "white", "HP": "pacific_islander", "TR": "two_or_more"}
@@ -242,6 +253,46 @@ def build_year(class_year):
     return d
 
 
+def read_universe_g09(class_year):
+    """Grade-9 enrollment of open study-state schools from an older CCD universe file
+    (one file per year before 2014-15); returns NCESSCH, class_year, enroll_g09."""
+    folder = CCD_DIR / f"{class_year - 1}-{class_year}"
+    zips = [p for p in folder.glob("sc*_txt.zip")]
+    if len(zips) != 1:
+        raise FileNotFoundError(f"expected one sc*_txt.zip universe file in {folder}, found {len(zips)}")
+    with zipfile.ZipFile(zips[0]) as z:
+        name = next(n for n in z.namelist() if n.lower().endswith(".txt"))
+    proc = subprocess.Popen(["unzip", "-p", str(zips[0]), name], stdout=subprocess.PIPE)
+    d = pd.read_csv(proc.stdout, sep="\t", dtype=str, encoding="latin-1",
+                    usecols=["NCESSCH", "LSTATE", "STATUS", "G09"])
+    proc.wait()
+    n0 = len(d)
+    d = d[d["LSTATE"].isin(STUDY_STATES)]
+    n1 = len(d)
+    d = d[d["STATUS"].str.strip().isin(UNIVERSE_OPEN)]
+    print(f"  {folder.name} (universe file, grade 9 only): {n0:,} schools -> {n1:,} in study states -> "
+          f"{len(d):,} open; with grade-9 count {num(d['G09']).notna().sum():,}")
+    return pd.DataFrame({"NCESSCH": d["NCESSCH"], "class_year": class_year, "enroll_g09": num(d["G09"])})
+
+
+def build_grade9(panel):
+    """Grade-9 enrollment by school and class year, G9_FIRST_YEAR-LAST_YEAR: older
+    universe files before FIRST_YEAR, then the panel's enroll_g09."""
+    early = pd.concat([read_universe_g09(y) for y in range(G9_FIRST_YEAR, FIRST_YEAR)], ignore_index=True)
+    mapping = stable_ids(sorted(early["NCESSCH"].unique()))
+    early["school_id"] = early["NCESSCH"].map(mapping)
+    g9 = pd.concat([early[["school_id", "class_year", "enroll_g09"]],
+                    panel[["school_id", "class_year", "enroll_g09"]]], ignore_index=True)
+    g9["enroll_g09"] = pd.to_numeric(g9["enroll_g09"]).astype("Int64")
+    dup = g9.duplicated(["school_id", "class_year"]).sum()
+    if dup:
+        raise ValueError(f"{dup} duplicate (school_id, class_year) rows in grade-9 counts")
+    g9 = g9.sort_values(["school_id", "class_year"]).reset_index(drop=True)
+    g9.to_parquet(G9_OUT, index=False)
+    print(f"\nWrote {G9_OUT.name}: {len(g9):,} school x year rows ({len(early):,} from 2011-12 to 2013-14), "
+          f"class years {g9['class_year'].min()}-{g9['class_year'].max()}")
+
+
 def main():
     print(f"CCD school years {FIRST_YEAR - 1}-{FIRST_YEAR} to {LAST_YEAR - 1}-{LAST_YEAR}, study states only")
     df = pd.concat([build_year(y) for y in range(FIRST_YEAR, LAST_YEAR + 1)], ignore_index=True)
@@ -272,6 +323,7 @@ def main():
     out = out.sort_values(["state", "school_id", "class_year"]).reset_index(drop=True)
     out.to_parquet(OUT, index=False)
     print(f"\nWrote {OUT.name}: {len(out):,} school x year rows, {out['school_id'].nunique():,} schools")
+    build_grade9(out)
 
     hs = out[out["enroll_g12"] > 0]
     print("\nSchools with grade-12 enrollment, by state and class year:")

@@ -7,12 +7,20 @@ cd "$(dirname "$0")"
 uv run --locked python code/01_clean_fsa.py   # FSA FAFSA completion -> data/derived/fsa_fafsa_hs.parquet
 uv run --locked python code/02_link_fsa_codes.py   # pre-2021 FSA records -> School Code, data/derived/fsa_school_codes.parquet
 uv run --locked python code/03_build_fsa_school_panel.py   # school x class FSA panel, data/derived/fsa_school_panel.parquet
-uv run --locked python code/04_build_ccd_school_panel.py   # CCD school characteristics, data/derived/ccd_school_panel.parquet
+uv run --locked python code/04_build_ccd_school_panel.py   # CCD school characteristics + grade-9 counts from 2011-12, data/derived/ccd_school_panel.parquet and ccd_grade9.parquet
 uv run --locked python code/05_build_analysis_panel.py   # policy timing + first-stage analysis panel with sample flags, data/derived/policy_timing.parquet and analysis_panel.parquet
 uv run --locked python code/06_first_stage.py   # first stage by state, output/tables/first_stage_by_state.csv
 uv run --locked python code/07_build_state_outcomes.py   # college-going outcomes from state files, data/derived/state_outcomes.parquet
 uv run --locked python code/08_reduced_form.py   # outcomes merged onto the panel + reduced form by state (incl. graduate denominator), output/tables/reduced_form_by_state.csv, first_stage_grad_by_state.csv, graduate_denominator_check.csv
 uv run --locked python code/09_summary_stats.py   # summary statistics of the first-stage and reduced-form samples, output/tables/summary_stats_{fs,rf}_by_*.csv
 uv run --locked python code/10_export_tables.py   # formatted Tables 1A/1B, 2, 3, 4 for the paper, output/tables/results_tables.html
-uv run --locked python code/11_event_study.py   # event study by state (dose x class) + pre-trend tests, output/tables/event_study_*.csv, output/figures/event_study_*.png
+uv run --locked python code/11_event_study.py   # event study by state (dose x class; main, graduate denominator, clean dose) + pre-trend tests, output/tables/event_study_*.csv, output/figures/event_study_*.png
+Rscript code/12_aggregation.R   # Bayesian hierarchical pooling of state estimates (Meager 2019), output/tables/pooling_*.csv, output/figures/pooling_forest.png
+# Optional: cross-check the pooling against baggr (archived on CRAN; install steps in README). Skipped if baggr is missing.
+if Rscript -e 'quit(status = !requireNamespace("baggr", quietly = TRUE))'; then
+  Rscript code/13_baggr_check.R   # output/tables/pooling_baggr_check.csv
+else
+  echo "baggr not installed: skipping code/13_baggr_check.R"
+fi
+Rscript code/14_pooling_report.R   # plain-language summary of the pooling results, output/pooling_summary.md
 uv run --locked pytest -q

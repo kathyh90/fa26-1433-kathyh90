@@ -28,17 +28,22 @@ Specifications (`spec`):
                graduate count drop out (TX before e = -3, NJ before e = -5); IL has
                no counts, and NY and OK none after the mandate, so their samples are
                empty. Same controls, weights, and enrollment outcome as main.
+  clean_dose   as main with dose_clean (dose classes moved off 2020, 2021, 2024;
+               step 6), in AL, TX, CA, IN, NH only.
 
 Pre-trend tests (school-clustered Wald F, df = (q, clusters - 1)):
   pre_all       beta_k = 0 for all k <= -2
-  pre_no_dose   beta_k = 0 for all k <= -4, leaving out the dose classes (e = -3, -2).
+  pre_no_dose   beta_k = 0 for all k <= -2 except the dose classes (main and
+                grad_denom: e = -3, -2, so k <= -4; clean_dose: its own dose classes).
                 For y = fcr, beta_-3 and beta_-2 are mechanically negative: dose is
                 1 - mean fcr in those classes, so noise in them reverts by e = -1.
                 pre_no_dose is the clean parallel-trends test for the first stage.
 
 Writes output/tables/event_study_by_state.csv (one row per state, outcome, and
 class), output/tables/event_study_pretrends.csv (one row per state, outcome, and
-test), and output/figures/event_study_{fcr,enroll}.png (both specs overlaid).
+test), output/figures/event_study_{fcr,enroll}.png (main and grad_denom overlaid),
+and output/figures/event_study_{fcr,enroll}_clean_dose.png (clean_dose alone,
+with its dose classes shaded, in the states where it runs).
 
 Usage (from the repository root):
     uv run --locked python code/11_event_study.py
@@ -63,7 +68,8 @@ FIGURES = OUTPUT / "figures"
 REF = -1          # omitted event time (reference class)
 DOSE_E = {-3, -2}  # dose classes
 OUTCOMES = {"fcr": "FAFSA completion rate", "enroll": "College enrollment rate"}
-SPECS = {"main": ("CCD grade-12 denominator", "#2a78d6"), "grad_denom": ("Graduate denominator", "#eb6834")}
+SPECS = {"main": ("CCD grade-12 denominator", "#2a78d6"), "grad_denom": ("Graduate denominator", "#eb6834"),
+         "clean_dose": ("Dose off COVID/2024 classes", "#1baa7a")}
 COLOR = {"text": "#0b0b0b", "muted": "#52514e", "grid": "#e4e3df", "surface": "#fcfcfb"}
 
 
@@ -104,8 +110,9 @@ def wald(fit, names, n_clusters):
     return f, float(stats.f.sf(f, len(names), n_clusters - 1))
 
 
-def event_study(d, controls, y):
-    """Fit the event study on one state's sample; returns (coefficient rows, test rows)."""
+def event_study(d, controls, y, dose_e=DOSE_E):
+    """Fit the event study on one state's sample; returns (coefficient rows, test rows).
+    dose_e: event times of the spec's dose classes, left out of pre_no_dose."""
     ks = sorted(k for k in d["e"].dropna().unique() if k != REF)
     if REF not in set(d["e"]) or not ks:
         return None
@@ -123,7 +130,8 @@ def event_study(d, controls, y):
     coefs["ci_hi"] = coefs["beta"] + crit * coefs["se"]
     coefs["post"] = coefs["e"] >= 0
     tests = []
-    for test, keep in {"pre_all": lambda k: k <= -2, "pre_no_dose": lambda k: k <= -4}.items():
+    for test, keep in {"pre_all": lambda k: k <= -2,
+                       "pre_no_dose": lambda k: k <= -2 and k not in dose_e}.items():
         names = [es_name(k) for k in ks if keep(k)]
         f, p = wald(fit, names, g)
         tests.append({"test": test, "n_coefs": len(names), "F": f, "p": p,
@@ -132,8 +140,13 @@ def event_study(d, controls, y):
     return coefs.assign(**meta), pd.DataFrame(tests).assign(**meta)
 
 
-def plot(coef, y):
-    """Small multiples, one panel per state: beta_k with 95% CIs by event time."""
+def plot(coef, y, specs, suffix="", extra_dose=None):
+    """Small multiples, one panel per state: beta_k with 95% CIs by event time for
+    the given specs (states with any of them). Grey band: the baseline dose classes
+    (e = -3, -2), drawn when a baseline-dose spec (main, grad_denom) is plotted;
+    extra_dose {state: event times} adds green bands (the clean dose classes)."""
+    baseline = any(sp in ("main", "grad_denom") for sp in specs)
+    coef = coef[coef["spec"].isin(specs)]
     states = [s for s in STUDY_STATES if s in set(coef.loc[coef["outcome"] == y, "state"])]
     ncol = 4
     nrow = -(-len(states) // ncol)
@@ -143,10 +156,14 @@ def plot(coef, y):
         ax.set_facecolor(COLOR["surface"])
         ax.axhline(0, color=COLOR["muted"], lw=0.8)
         ax.axvline(-0.5, color=COLOR["muted"], lw=0.8, ls=":")
-        ax.axvspan(-3.5, -1.5, color=COLOR["grid"], lw=0)   # dose classes
-        for i, (spec, (label, color)) in enumerate(SPECS.items()):
+        if baseline:
+            ax.axvspan(-3.5, -1.5, color=COLOR["grid"], lw=0)   # baseline dose classes
+        for k in (extra_dose or {}).get(st, set()):
+            ax.axvspan(k - 0.5, k + 0.5, color=SPECS["clean_dose"][1], alpha=0.15, lw=0)
+        for i, spec in enumerate(specs):
+            label, color = SPECS[spec]
             cs = c[c["spec"] == spec]
-            x = cs["e"] + (i - 0.5) * 0.24   # side by side so the CIs don't overlap
+            x = cs["e"] + (i - (len(specs) - 1) / 2) * 0.22   # side by side so the CIs don't overlap
             ax.vlines(x, cs["ci_lo"], cs["ci_hi"], color=color, lw=2)
             ax.plot(x, cs["beta"], "o-", color=color, lw=2, ms=5, mec=COLOR["surface"], mew=1.5, label=label)
         ax.set_title(st, fontsize=10, color=COLOR["text"], loc="left")
@@ -157,15 +174,24 @@ def plot(coef, y):
             ax.spines[side].set_color(COLOR["grid"])
     for ax in axes.flat[len(states):]:
         ax.set_visible(False)
-    handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper right", ncol=2, frameon=False, fontsize=9, labelcolor=COLOR["text"])
+    legend = {}   # every spec drawn in any panel (clean_dose is not in every state)
+    for ax in axes.flat[:len(states)]:
+        legend.update(zip(*reversed(ax.get_legend_handles_labels())))
+    # two specs: legend beside the title; more: on its own line below the title, so they don't overlap
+    below = len(specs) > 2
+    fig.legend(legend.values(), legend.keys(), loc="upper left" if below else "upper right",
+               bbox_to_anchor=(0.01, 0.95) if below else None, ncol=len(specs), frameon=False, fontsize=9,
+               labelcolor=COLOR["text"])
     fig.supxlabel("Event time (e = 0: first covered class; e = -1 omitted)", fontsize=9, color=COLOR["text"])
     fig.supylabel(f"Coefficient on dose x class: {OUTCOMES[y]}", fontsize=9, color=COLOR["text"])
-    fig.suptitle(f"Event study: {OUTCOMES[y]} (95% CI; shaded: dose classes)", fontsize=11,
+    shade = "; ".join((["grey: dose classes"] if baseline else [])
+                      + (["green: dose classes off COVID/2024" if not baseline else "green: clean dose classes"]
+                         if extra_dose else []))
+    fig.suptitle(f"Event study: {OUTCOMES[y]} (95% CI; {shade})", fontsize=11,
                  color=COLOR["text"], x=0.01, ha="left")
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.93) if below else (0, 0, 1, 1))
     FIGURES.mkdir(parents=True, exist_ok=True)
-    path = FIGURES / f"event_study_{y}.png"
+    path = FIGURES / f"event_study_{y}{suffix}.png"
     fig.savefig(path, dpi=150)
     plt.close(fig)
     return path
@@ -177,10 +203,13 @@ rf = load_step8()
 def main():
     df = rf.prepare(rf.merge_outcomes())
     g = rf.with_graduate_denominator(df)
-    coef_rows, test_rows = [], []
+    coef_rows, test_rows, clean_e = [], [], {}
     for st, spec in [(s, sp) for s in STUDY_STATES if s not in rf.fs.EXCLUDE_STATES for sp in SPECS]:
-        panel = g if spec == "grad_denom" else df
-        base, _, controls, _ = rf.grad_sample(df, g, st) if spec == "grad_denom" else rf.state_sample(df, st, "main")
+        if not rf.fs.runs(df[df["state"] == st], spec):
+            continue
+        panel = g if spec == "grad_denom" else rf.fs.spec_panel(df, spec)
+        base, _, controls, _ = (rf.grad_sample(df, g, st) if spec == "grad_denom"
+                                else rf.state_sample(df, st, spec))
         if base["school_id"].nunique() < 2 or not base["post"].any() or base["post"].all():
             print(f"  {st} {spec}: no first-stage sample (no counts or no pre and post classes); skipped")
             continue
@@ -188,7 +217,12 @@ def main():
         print(f"  {st} {spec}: {len(schools):,} first-stage schools")
         for y in OUTCOMES:
             d = es_sample(panel[panel["state"] == st], schools, controls, y)
-            res = event_study(d, controls, y) if len(d) else None
+            cls = ["dose_clean_class_1", "dose_clean_class_2"] if spec == "clean_dose" else ["dose_class_1", "dose_class_2"]
+            r0 = base.iloc[0]
+            dose_e = {int(r0[c] - r0["first_covered_class"]) for c in cls}
+            if spec == "clean_dose":
+                clean_e[st] = dose_e
+            res = event_study(d, controls, y, dose_e) if len(d) else None
             if res is None:
                 print(f"    {y}: no class besides the reference class; skipped")
                 continue
@@ -201,7 +235,12 @@ def main():
     tests = tests[lead + [c for c in tests if c not in lead]]
     coef.to_csv(OUT_COEF, index=False)
     tests.to_csv(OUT_TEST, index=False)
-    paths = [plot(coef, y) for y in OUTCOMES]
+    # two figures per outcome: the two denominators, and the clean dose alone
+    # (grade-12 denominator; states where it moves the dose classes)
+    paths = [plot(coef, y, ["main", "grad_denom"]) for y in OUTCOMES]
+    clean_states = set(coef.loc[coef["spec"] == "clean_dose", "state"])
+    paths += [plot(coef[coef["state"].isin(clean_states)], y, ["clean_dose"], "_clean_dose", clean_e)
+              for y in OUTCOMES]
 
     wide = tests.pivot_table(index=["state", "outcome"], columns=["test", "spec"], values="p", sort=False)
     print("\nPre-trend tests (p-values; pre_no_dose excludes e = -3, -2)")

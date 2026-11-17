@@ -4,6 +4,8 @@ Tables 1A and 1B: summary statistics of the first-stage and reduced-form samples
 Table 2: first stage by state (step 6).
 Table 3: reduced form by state, with the first stage on the same sample (step 8).
 Table 4: graduate-denominator specification vs. the baseline, same schools (step 8).
+Table 5: dose moved off the COVID (2020, 2021) and 2024 classes vs. the baseline
+         dose, with pre-trend tests (steps 6, 8, 11).
 
 Coefficients show the standard error (clustered by school) below them in
 parentheses; * p<0.10, ** p<0.05, *** p<0.01. The HTML uploads to Google Drive
@@ -156,6 +158,32 @@ def grad_table():
                        "Schools", "Classes"], rows)
 
 
+def clean_dose_table():
+    """Table 5: main vs. clean_dose (dose classes moved off 2020, 2021, 2024): first
+    stage, reduced form, and the pre_no_dose pre-trend p-value for each outcome."""
+    fs = pd.read_csv(TABLES / "first_stage_by_state.csv").set_index(["state", "spec"])
+    rf = pd.read_csv(TABLES / "reduced_form_by_state.csv").set_index(["state", "spec"])
+    pt = pd.read_csv(TABLES / "event_study_pretrends.csv").query("test == 'pre_no_dose'") \
+        .set_index(["state", "spec", "outcome"])["p"]
+    timing = pd.read_parquet(OUTPUT.parent / "data" / "derived" / "policy_timing.parquet").query("school_id.isna()") \
+        .set_index("state")
+
+    def p_cell(key):
+        return f"{pt[key]:.3f}" if key in pt.index and pd.notna(pt[key]) else ""
+
+    rows = []
+    for st in [s for s in STUDY_STATES if (s, "clean_dose") in fs.index]:
+        t = timing.loc[st]
+        for spec, classes in [("main", (t.dose_class_1, t.dose_class_2)),
+                              ("clean_dose", (t.dose_clean_class_1, t.dose_clean_class_2))]:
+            f, r = fs.loc[(st, spec)], rf.loc[(st, spec)] if (st, spec) in rf.index else None
+            rows.append([STATE_NAMES[st] if spec == "main" else "", f"{int(classes[0])}, {int(classes[1])}",
+                         coef(f.beta, f.se, f.p), coef(r.beta, r.se, r.p) if r is not None else "",
+                         p_cell((st, spec, "fcr")), p_cell((st, spec, "enroll")), count(f.n_schools)])
+    return html_table(["State", "Dose classes", "First stage", "Reduced form", "Pre-trend p: completion",
+                       "Pre-trend p: enrollment", "Schools (first stage)"], rows)
+
+
 def main():
     rf_table, defs = reduced_form_table()
     rf = pd.read_csv(TABLES / "reduced_form_by_state.csv").query("spec == 'main'")
@@ -183,14 +211,14 @@ def main():
         "specification omits it because CCD has no FRL data for its first covered class. Dose = 1 − mean completion "
         "in the two dose classes. Sample: regular and career/technical public high schools, never virtual, "
         "with no window class in which seniors exceed 75% of grades 9-12 (main and no FRL); the Deneault-screens rows drop only special-education schools, keeping alternative "
-        "and virtual schools, with the no-FRL controls. Colorado is excluded. Preliminary: grade-12 enrollment denominator. "
+        "and virtual schools, with the no-FRL controls. Colorado and Maryland (no FAFSA requirement) are excluded. Preliminary: grade-12 enrollment denominator. "
         "* p&lt;0.10, ** p&lt;0.05, *** p&lt;0.01.</p>",
         "<h2>Table 3. Reduced form: college enrollment on dose × post, by state</h2>", rf_table,
         "<p class='note'>Notes: As Table 2, with the state's college enrollment rate (share of graduates) as the "
         "outcome, on the first-stage sample limited to window classes with outcome data and schools with the "
         "outcome in every one of them. The first stage is re-estimated on the same sample (main specification; standard "
         "error only, no stars), and RF / FS is the ratio of the two coefficients (no standard error). Oklahoma, New York, and New Jersey have "
-        "no post-mandate outcome yet; Connecticut and Pennsylvania outcomes are not built; Colorado is excluded. "
+        "no post-mandate outcome yet; Connecticut and Pennsylvania outcomes are not built; Colorado and Maryland are excluded. "
         f"Outcomes differ by state, so coefficients compare within a state, not across states: {defs}. "
         f"Schools dropped by the outcome requirement (main): {drops}. "
         "* p&lt;0.10, ** p&lt;0.05, *** p&lt;0.01.</p>",
@@ -205,6 +233,14 @@ def main():
         "(4-year cohort graduates) is in first_stage_grad_by_state.csv until its post-mandate outcome is released. Graduate counts are consistent within "
         "each state over the window (graduates ÷ grade-12 enrollment: output/tables/graduate_denominator_check.csv). "
         "First-stage cells show standard errors only. * p&lt;0.10, ** p&lt;0.05, *** p&lt;0.01.</p>",
+        "<h2>Table 5. Dose moved off the COVID and 2024 classes</h2>", clean_dose_table(),
+        "<p class='note'>Notes: Main specification of Tables 2 and 3 with the baseline dose (first row: the two "
+        "classes before the reference class) and with the dose from the two newest classes before the reference "
+        "class that are not 2020, 2021 (COVID) or 2024 (FAFSA rollout) (second row). Only states whose dose classes "
+        "this moves are shown; in Illinois (reference 2020) and the 2025 adopters (reference 2024) the flagged class "
+        "is the reference class, not a dose class. Pre-trend p: event-study Wald test that all pre-period "
+        "coefficients except the dose classes and the reference class are 0 (output/tables/event_study_pretrends.csv, "
+        "pre_no_dose); blank where none can be tested. * p&lt;0.10, ** p&lt;0.05, *** p&lt;0.01.</p>",
     ]
     OUT.write_text(f"<html><head><meta charset='utf-8'>{STYLE}</head><body>{''.join(parts)}</body></html>",
                    encoding="utf-8")

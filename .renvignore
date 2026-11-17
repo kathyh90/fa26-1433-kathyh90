@@ -1,0 +1,5 @@
+# Folders renv should not scan for R package dependencies (reference files, data, outputs, Python env)
+docs/references/
+data/
+output/
+.venv/

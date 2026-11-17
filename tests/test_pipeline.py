@@ -445,6 +445,16 @@ class TestPolicyTiming:
         t = analysis_panel.timing(2024, 2023, pd.NA, 2015, 2026, 2026)
         assert (t["dose_class_1"], t["dose_class_2"], t["reference_class"]) == (2020, 2021, 2022)
 
+    def test_clean_dose_classes_skip_covid_and_2024(self):
+        """clean dose: the two newest classes before the reference that are not 2020,
+        2021, or 2024; unchanged (not shifted) where the dose classes are already clean."""
+        cases = {2022: ((2018, 2019), True), 2023: ((2018, 2019), True), 2024: ((2019, 2022), True),
+                 2018: ((2015, 2016), False), 2025: ((2022, 2023), False)}
+        for first, (classes, shifted) in cases.items():
+            t = analysis_panel.timing(first, pd.NA, pd.NA, 2015, 2026, 2026)
+            assert (t["dose_clean_class_1"], t["dose_clean_class_2"]) == classes and t["dose_shifted"] == shifted
+            assert not {t["dose_clean_class_1"], t["dose_clean_class_2"]} & (analysis_panel.COVID | analysis_panel.ROLLOUT_2024)
+
     def test_policy_inputs_are_complete(self):
         """Every study state has one policy row with a first covered class."""
         states = pd.read_csv(analysis_panel.STATES, dtype=str)
@@ -518,6 +528,33 @@ class TestCcdSchoolPanel:
         """Every CCD school type maps to a standard label."""
         assert self.q("SELECT count(*) FROM c WHERE school_type IS NOT NULL AND school_type_std IS NULL") == 0
 
+    needs_g9 = needs(ccd_panel.G9_OUT, "04_build_ccd_school_panel.py")
+
+    @needs_g9
+    def test_grade9_one_row_per_school_and_year(self):
+        """Grade-9 counts have at most one row per school and class year, from G9_FIRST_YEAR to LAST_YEAR."""
+        q = lambda sql: query(sql, g=ccd_panel.G9_OUT)  # noqa: E731
+        assert q("SELECT count(*) - count(DISTINCT (school_id, class_year)) FROM g") == 0
+        assert q("SELECT min(class_year) FROM g") == ccd_panel.G9_FIRST_YEAR
+        assert q("SELECT max(class_year) FROM g") == ccd_panel.LAST_YEAR
+        assert q("SELECT count(*) FROM g WHERE enroll_g09 < 0") == 0
+
+    @needs_g9
+    @needs_panel
+    def test_grade9_matches_panel_from_2015(self):
+        """From 2014-15 on, grade-9 counts are exactly the CCD panel's enroll_g09."""
+        assert query("""
+            SELECT count(*) FROM c FULL JOIN (SELECT * FROM g WHERE class_year >= 2015) g2 USING (school_id, class_year)
+            WHERE c.enroll_g09 IS DISTINCT FROM g2.enroll_g09
+        """, c=ccd_panel.OUT, g=ccd_panel.G9_OUT) == 0
+
+    @needs_g9
+    def test_grade9_early_years_are_present(self):
+        """Each early school year (2011-12 to 2013-14) has thousands of schools with ninth graders."""
+        n = query(f"SELECT min(n) FROM (SELECT class_year, count(*) FILTER (WHERE enroll_g09 > 0) AS n FROM g "
+                  f"WHERE class_year < {ccd_panel.FIRST_YEAR} GROUP BY class_year)", g=ccd_panel.G9_OUT)
+        assert n > 5000
+
 
 # --- code/05_build_analysis_panel.py: the first-stage analysis panel ---------
 
@@ -540,6 +577,15 @@ class TestAnalysisPanel:
         assert self.q("SELECT count(*) FROM a WHERE fcr < 0 OR fcr > 1") == 0
 
     @needs_panel
+    def test_cohort9_is_grade9_three_years_earlier(self):
+        """cohort9 equals the school's grade-9 count three class years earlier, and exists from the class of 2015."""
+        assert query("""
+            SELECT count(*) FROM a LEFT JOIN g ON g.school_id = a.school_id AND g.class_year = a.class_year - 3
+            WHERE a.cohort9 IS DISTINCT FROM g.enroll_g09
+        """, a=analysis_panel.OUT, g=analysis_panel.GRADE9) == 0
+        assert self.q("SELECT avg((cohort9 IS NOT NULL)::int) FROM a WHERE class_year = 2015") > 0.8
+
+    @needs_panel
     def test_dose_is_one_minus_mean_dose_fcr(self):
         """Dose equals 1 minus the mean completion rate over the two dose classes."""
         assert self.q("""
@@ -556,6 +602,22 @@ class TestAnalysisPanel:
         assert self.q("SELECT max(class_year) FROM a WHERE state = 'LA' AND in_window") == 2019
 
     @needs_panel
+    def test_common_window_is_e_minus3_to_0(self):
+        """The common window (pooling input) is e = -3 ... 0 for every balanced school with post
+        classes: four classes ending at the first covered class (Louisiana 2015-2018). Schools
+        missing a class fail the balance screen; CT and PA have no post class yet; a partial-rollout
+        class is skipped (Colorado's Westminster schools), so those schools are checked without it."""
+        bad = self.q("""
+            SELECT count(*) FROM (
+                SELECT school_id, min(class_year) lo, max(class_year) hi, count(*) n, any_value(first_covered_class) f,
+                       any_value(partial_rollout_class) pr
+                FROM a WHERE in_window_common AND f_balanced_common AND n_post_classes > 0 GROUP BY school_id)
+            WHERE lo <> f - 3 OR hi <> f OR n <> 4 - (pr IS NOT NULL AND pr BETWEEN f - 3 AND f)::INT""")
+        assert bad == 0
+        assert self.q("SELECT min(class_year) FROM a WHERE state = 'LA' AND in_window_common") == 2015
+        assert self.q("SELECT max(class_year) FROM a WHERE state = 'LA' AND in_window_common") == 2018
+
+    @needs_panel
     def test_balanced_schools_have_every_window_class(self):
         """A balanced school has a completion rate in every class its window needs."""
         assert self.q("""
@@ -563,6 +625,12 @@ class TestAnalysisPanel:
                 SELECT school_id, any_value(window_classes_needed) AS need,
                        count(*) FILTER (WHERE in_window AND fcr IS NOT NULL) AS have
                 FROM a WHERE f_balanced GROUP BY school_id) WHERE have <> need
+        """) == 0
+        assert self.q("""
+            SELECT count(*) FROM (
+                SELECT school_id, any_value(window_classes_needed_common) AS need,
+                       count(*) FILTER (WHERE in_window_common AND fcr IS NOT NULL) AS have
+                FROM a WHERE f_balanced_common GROUP BY school_id) WHERE have <> need
         """) == 0
 
     @needs_panel
@@ -607,11 +675,38 @@ class TestFirstStage:
         """Colorado is excluded until its design is decided."""
         assert "CO" in first_stage.EXCLUDE_STATES
 
+    def test_common_window_spec(self):
+        """common_window uses the common window's rows and screens and main's controls;
+        NO_FRL_STATES drop the FRL share in every spec that has it."""
+        df = self.toy_panel().assign(in_window_common=[False, True, True] * 2)
+        assert first_stage.spec_panel(df, "common_window")["in_window"].tolist() == [False, True, True] * 2
+        screens, controls = first_stage.SPECS["common_window"]
+        assert {"f_balanced_common", "f_senior_share_ok_common"} <= set(screens)
+        assert not {"f_balanced", "f_senior_share_ok"} & set(screens)
+        assert controls == first_stage.SPECS["main"][1]
+        for spec in first_stage.FRL_SPECS:
+            assert "share_frl" not in first_stage.spec_controls(spec, "IL")
+            assert "share_frl" in first_stage.spec_controls(spec, "TX")
+
+    @needs_results
+    def test_common_window_runs_in_every_main_state(self):
+        """Every state with a main first stage has a common-window estimate (the pooling input)."""
+        out = pd.read_csv(first_stage.OUT)
+        assert set(out.query("spec == 'common_window'")["state"]) == set(out.query("spec == 'main'")["state"])
+
+    def test_maryland_left_out(self):
+        """Maryland has no FAFSA requirement (county boards' support duty only), so it is
+        excluded, and its policy input still says so."""
+        assert "MD" in first_stage.EXCLUDE_STATES
+        pol = pd.read_csv(ROOT / "data" / "policy" / "state_mandates.csv").set_index("state")
+        assert pol.loc["MD", "policy_type"] == "lea_support_duty"
+        assert pol.loc["MD", "graduation_consequence"] == "none"
+
     @needs_results
     def test_results_cover_louisiana_specs(self):
-        """Louisiana has the main, no-FRL, and Deneault-screen estimates."""
+        """Louisiana has the main, no-FRL, Deneault-screen, and common-window estimates."""
         out = pd.read_csv(first_stage.OUT)
-        assert set(out.loc[out["state"] == "LA", "spec"]) == {"main", "no_frl", "deneault"}
+        assert set(out.loc[out["state"] == "LA", "spec"]) == {"main", "no_frl", "deneault", "common_window"}
         assert out["se"].gt(0).all() and "CO" not in set(out["state"])
 
 
@@ -872,6 +967,16 @@ class TestReducedForm:
         return set(both[both].index) - set(first_stage.EXCLUDE_STATES)
 
     @needs_rf
+    def test_graduate_ratio_test(self):
+        """The graduate-ratio test runs main and trimmed versions in every state with a
+        graduate-denominator first stage; trimming only drops schools."""
+        t = pd.read_csv(reduced_form.OUT_GRAD_TEST)
+        assert set(t["spec"]) == {"main", "main_trimmed"} and (t["se"] > 0).all()
+        assert set(t["state"]) == set(pd.read_csv(reduced_form.OUT_FS_GRAD)["state"])
+        w = t.pivot(index="state", columns="spec", values="n_schools")
+        assert (w["main_trimmed"] <= w["main"]).all()
+
+    @needs_rf
     def test_states_with_post_outcomes_only(self):
         """Exactly the states whose outcome covers a pre and a post window class are
         estimated (excluded states never are); LA has Deneault's spec."""
@@ -1010,9 +1115,26 @@ class TestEventStudy:
         assert set(tests["test"]) == {"pre_all", "pre_no_dose"}
 
     @needs(event_study.OUT_COEF, "11_event_study.py")
+    def test_clean_dose_outputs(self):
+        """clean_dose runs exactly in the states whose dose it moves, in the first stage
+        and the event study; its pre_no_dose test leaves out its own dose classes."""
+        timing = pd.read_parquet(DERIVED / "policy_timing.parquet").query("school_id.isna()").set_index("state")
+        fs = pd.read_csv(first_stage.OUT)
+        main = set(fs.query("spec == 'main'")["state"])
+        shifted = {s for s in main if timing.loc[s, "dose_shifted"]}
+        assert set(fs.query("spec == 'clean_dose'")["state"]) == shifted
+        t = pd.read_csv(event_study.OUT_TEST).query("spec == 'clean_dose' and test == 'pre_no_dose'")
+        assert set(t["state"]) == shifted
+        for r in t.dropna(subset=["classes"]).itertuples():
+            dose_e = {int(timing.loc[r.state, c] - timing.loc[r.state, "first_covered_class"])
+                      for c in ["dose_clean_class_1", "dose_clean_class_2"]}
+            assert not {int(k) for k in r.classes.split(",")} & (dose_e | {-1})
+
+    @needs(event_study.OUT_COEF, "11_event_study.py")
     def test_outputs(self):
         """Every main (and graduate-denominator) first-stage state has a FAFSA event study; the reference class is 0 with
-        no SE; pre_no_dose tests only classes at or before e = -4."""
+        no SE; for main and grad_denom (dose classes e = -3, -2), pre_no_dose tests only
+        classes at or before e = -4 (clean_dose: see test_clean_dose_outputs)."""
         c, t = pd.read_csv(event_study.OUT_COEF), pd.read_csv(event_study.OUT_TEST)
         fs = set(pd.read_csv(first_stage.OUT).query("spec == 'main'")["state"])
         assert fs == set(c.query("spec == 'main' and outcome == 'fcr'")["state"])
@@ -1021,5 +1143,72 @@ class TestEventStudy:
         ref = c[c["e"] == event_study.REF]
         assert (ref["beta"] == 0).all() and (ref["se"] == 0).all()
         assert len(ref) == c.groupby(["state", "spec", "outcome"]).ngroups
-        e = t.query("test == 'pre_no_dose'")["classes"].dropna().str.split(",").explode().astype(int)
+        e = t.query("test == 'pre_no_dose' and spec in ['main', 'grad_denom']")["classes"] \
+            .dropna().str.split(",").explode().astype(int)
         assert (e <= -4).all()
+
+
+# ---- 12_aggregation.R ------------------------------------------------------------------------
+
+POOL_STATES = OUTPUT / "tables" / "pooling_states.csv"
+
+
+@needs(POOL_STATES, "12_aggregation.R")
+class TestAggregation:
+    def test_pooled_states_match_main_estimates(self):
+        """Both pooling models use exactly the common-window states and estimates of steps 06 and 08."""
+        p = pd.read_csv(POOL_STATES)
+        src = {"fafsa_completion": pd.read_csv(OUTPUT / "tables" / "first_stage_by_state.csv"),
+               "college_enrollment": pd.read_csv(OUTPUT / "tables" / "reduced_form_by_state.csv")}
+        for outcome, df in src.items():
+            main = df.query("spec == 'common_window'").set_index("state")["beta"].sort_index()
+            for model in ["no_covariate", "covariate"]:
+                got = p.query("outcome == @outcome and model == @model").set_index("state")["beta"].sort_index()
+                pd.testing.assert_series_equal(got, main, check_names=False)
+
+    def test_shrinkage_toward_pooled_mean(self):
+        """Pooled mu lies within the range of state estimates (no covariate; there center_mean = mu),
+        sigma_beta >= 0, and in both models each state's pooled effect lies between its own
+        estimate and its center mu + delta * x_k (up to simulation noise)."""
+        h = pd.read_csv(OUTPUT / "tables" / "pooling_hyper.csv").query(
+            "input_spec == 'common_window' and model == 'no_covariate' and prior == 'main'")
+        p = pd.read_csv(POOL_STATES)
+        assert (h.query("parameter == 'sigma_beta'")["q025"] >= 0).all()
+        for outcome, d in p.query("model == 'no_covariate'").groupby("outcome"):
+            mu = h.query("outcome == @outcome and parameter == 'mu'")["mean"].item()
+            assert d["beta"].min() <= mu <= d["beta"].max()
+            # separate fits with separate draws, so center_mean equals mu up to simulation noise
+            assert d["center_mean"].nunique() == 1 and abs(d["center_mean"].iloc[0] - mu) < 0.005
+        lo, hi = p[["beta", "center_mean"]].min(axis=1), p[["beta", "center_mean"]].max(axis=1)
+        assert ((p["beta_k_mean"] >= lo - 0.005) & (p["beta_k_mean"] <= hi + 0.005)).all()
+        # each center's 95% interval contains its mean and is shared by states in the same diploma group
+        assert ((p["center_q025"] <= p["center_mean"]) & (p["center_mean"] <= p["center_q975"])).all()
+        assert (p.groupby(["outcome", "model", "no_diploma"])["center_q025"].nunique() == 1).all()
+
+    def test_pooling_metrics(self):
+        """omega_k = se_k^2 / (sigma_beta^2 + se_k^2) lies in (0, 1) and rises with se_k; omega_bar is
+        its average, in each outcome and model."""
+        p = pd.read_csv(POOL_STATES)
+        assert p["omega_k"].between(0, 1).all() and p["lambda_gp"].between(0, 1).all()
+        for _, d in p.groupby(["outcome", "model"]):
+            assert d["omega_bar"].nunique() == 1 and abs(d["omega_bar"].iloc[0] - d["omega_k"].mean()) < 1e-12
+            assert (d.sort_values("se")["omega_k"].diff().dropna() >= 0).all()
+
+    def test_holdout_predictions_and_loo(self):
+        """CT and PA have predictions in every model; leave-one-out drops each pooled state once."""
+        h = pd.read_csv(OUTPUT / "tables" / "pooling_hyper.csv")
+        n_models = h.groupby(["input_spec", "outcome", "model", "prior"]).ngroups
+        assert set(h["input_spec"]) == {"common_window", "main"}
+        assert set(h.query("input_spec == 'main'")["prior"]) == {"main"}   # window sensitivity: main prior only
+        assert (h["parameter"].isin(["predict_CT", "predict_PA"])).sum() == 2 * n_models
+        loo, p = pd.read_csv(OUTPUT / "tables" / "pooling_loo.csv"), pd.read_csv(POOL_STATES).query("model == 'no_covariate'")
+        assert sorted(zip(loo["outcome"], loo["dropped"])) == sorted(zip(p["outcome"], p["state"]))
+
+    @pytest.mark.skipif(not (OUTPUT / "tables" / "pooling_baggr_check.csv").exists(),
+                        reason="run code/13_baggr_check.R first (needs baggr)")
+    def test_baggr_check(self):
+        """baggr (MCMC) reproduces every exact main-prior parameter, and its chains converged."""
+        c = pd.read_csv(OUTPUT / "tables" / "pooling_baggr_check.csv")
+        h = pd.read_csv(OUTPUT / "tables" / "pooling_hyper.csv").query("input_spec == 'common_window' and prior == 'main'")
+        assert len(c) == len(h)
+        assert c["match"].all() and (c["max_rhat"] < 1.01).all()

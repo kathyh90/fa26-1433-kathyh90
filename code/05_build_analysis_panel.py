@@ -10,7 +10,13 @@ Deneault (2023; her mergedata_aejep.do and main_aejep.do):
             year); state graduate counts replace it later. "<5" completions
             are missing, as in Deneault.
   dose    = 1 - mean fcr over the two dose classes (both required)
+  dose_clean = the same over the two newest classes before the reference class
+            that are not COVID (2020, 2021) or FAFSA-rollout (2024) classes;
+            equals dose where the dose classes are already clean (robustness,
+            spec clean_dose in step 6)
   weight  = mean over pre-mandate classes of total enrollment / grades offered
+  cohort9 = grade-9 enrollment three years earlier (ccd_grade9.parquet, CCD
+            from 2011-12, so from the class of 2015 on)
   controls: shares white, Black, Hispanic, Asian; total enrollment and its
             square; FRL share (added). Deneault also controls for school ACT,
             which is not yet in the data.
@@ -49,12 +55,17 @@ STATES = POLICY / "state_mandates.csv"
 CO_SCHOOLS = POLICY / "co_grantee_schools.csv"
 FSA = DERIVED / "fsa_school_panel.parquet"
 CCD = DERIVED / "ccd_school_panel.parquet"
+GRADE9 = DERIVED / "ccd_grade9.parquet"   # grade-9 counts, class years 2012 on (step 4)
 TIMING = DERIVED / "policy_timing.parquet"
 OUT = DERIVED / "analysis_panel.parquet"
 COVID = {2020, 2021}
 ROLLOUT_2024 = {2024}   # class affected by the delayed 2024-25 FAFSA
 SCREENS_TABLE = OUTPUT / "tables" / "sample_screens_by_state.csv"
 WINDOW = (-4, 1)   # Deneault's estimation window in event time (e = -4 ... +1)
+# Common window for pooling across states (DECISIONS 2026-11-15): every state can supply
+# e = -3 ... 0 (Louisiana's FSA data start at e = -3), so the pre-period baseline and post
+# class are the same in event time everywhere. Flags with suffix _common (spec common_window).
+WINDOWS = {"": WINDOW, "_common": (-3, 0)}
 SENIOR_SHARE_MAX = 0.75   # seniors / grades 9-12 above this, in a school offering grade 9: not a graduating class
 VIRTUAL = {"yes", "full virtual", "exclusively virtual", "primarily virtual",
            "virtual with face to face options"}
@@ -79,10 +90,14 @@ def timing(first, partial, last, fsa_first, fsa_last, fsa_prelim):
     post_last = min(last, fsa_last) if pd.notna(last) else fsa_last
     post = list(range(first, post_last + 1)) if post_last >= first else []
     pre = [dose1, dose2, reference]
+    clean2, clean1 = classes_before(reference, 2, skip | COVID | ROLLOUT_2024)
     return {
         "reference_class": reference,
         "dose_class_1": dose1,
         "dose_class_2": dose2,
+        "dose_clean_class_1": clean1,
+        "dose_clean_class_2": clean2,
+        "dose_shifted": (clean1, clean2) != (dose1, dose2),
         "post_first": post[0] if post else pd.NA,
         "post_last": post[-1] if post else pd.NA,
         "n_post_classes": len(post),
@@ -126,6 +141,7 @@ def policy_timing(fsa):
 
     show = out.assign(
         dose=out["dose_class_1"].astype(str) + "-" + out["dose_class_2"].astype(str).str[-2:],
+        dose_clean=out["dose_clean_class_1"].astype(str) + "," + out["dose_clean_class_2"].astype(str).str[-2:],
         post=out["post_first"].astype(str) + "-" + out["post_last"].astype(str),
         flags=out.apply(lambda r: ", ".join(f for f, on in [
             ("dose not in FSA", not r["dose_in_fsa"]), ("COVID in dose/ref", r["dose_or_reference_covid"]),
@@ -134,8 +150,8 @@ def policy_timing(fsa):
             ("post incl. preliminary", r["post_includes_preliminary"])] if on), axis=1))
     show.loc[show["n_post_classes"] == 0, "post"] = "none yet"
     co_rows = show["school_id"].notna()
-    print("\n" + show.loc[~co_rows, ["state", "first_covered_class", "dose", "reference_class", "post",
-                                     "flags"]].to_string(index=False))
+    print("\n" + show.loc[~co_rows, ["state", "first_covered_class", "dose", "dose_clean", "reference_class",
+                                     "post", "flags"]].to_string(index=False))
     print("\nColorado grantee schools:")
     print(show.loc[co_rows].groupby(["first_covered_class", "partial_rollout_class", "dose", "reference_class",
                                      "post", "flags"], dropna=False)["school_id"].count()
@@ -188,22 +204,35 @@ def add_outcomes(df):
     return df
 
 
-def add_school_measures(df):
-    """Dose, weight, cohort, ratio, and controls; school-level ones are constant within school."""
-    g = df.groupby("school_id")
-    in_dose = (df["class_year"] == df["dose_class_1"]) | (df["class_year"] == df["dose_class_2"])
+def pre_fcr_over(df, c1, c2):
+    """Each school's mean fcr over the classes in columns c1 and c2 (both required, else missing)."""
+    in_dose = (df["class_year"] == df[c1]) | (df["class_year"] == df[c2])
     dose_fcr = df["fcr"].where(in_dose)
     n_dose = dose_fcr.notna().groupby(df["school_id"]).transform("sum")
-    df["pre_fcr"] = dose_fcr.groupby(df["school_id"]).transform("mean").where(n_dose == 2)
+    return dose_fcr.groupby(df["school_id"]).transform("mean").where(n_dose == 2)
+
+
+def add_school_measures(df):
+    """Dose, weight, cohort, ratio, and controls; school-level ones are constant within school."""
+    df["pre_fcr"] = pre_fcr_over(df, "dose_class_1", "dose_class_2")
     df["dose"] = 1 - df["pre_fcr"]
+    df["pre_fcr_clean"] = pre_fcr_over(df, "dose_clean_class_1", "dose_clean_class_2")
+    df["dose_clean"] = 1 - df["pre_fcr_clean"]
 
     pre = df["class_year"] < df["first_covered_class"]
     per_grade = (df["enroll_total"].astype("Float64") / df["n_grades"].astype("Float64")).where(pre)
     df["weight"] = per_grade.groupby(df["school_id"]).transform("mean")
 
-    # 9th-grade cohort of a class: grade-9 enrollment three years earlier.
-    g9 = df[["school_id", "class_year", "enroll_g09"]].assign(class_year=lambda d: d["class_year"] + 3)
-    df = df.merge(g9.rename(columns={"enroll_g09": "cohort9"}), on=["school_id", "class_year"], how="left")
+    # 9th-grade cohort of a class: grade-9 enrollment three years earlier, from all
+    # CCD years (not only classes in the FSA panel), so cohorts exist from 2015 on.
+    g9 = duckdb.sql(f"SELECT school_id, class_year + 3 AS class_year, enroll_g09 AS cohort9 "
+                    f"FROM read_parquet('{GRADE9.as_posix()}')").df()
+    n0 = len(df)
+    df = df.merge(g9, on=["school_id", "class_year"], how="left", validate="m:1")
+    assert len(df) == n0
+    has = df["cohort9"].notna().groupby(df["class_year"]).mean()
+    print(f"  9th-grade cohort merged: {n0:,} rows (none added or dropped); share with a cohort by class: "
+          + ", ".join(f"{y}: {s:.2f}" for y, s in has.items()))
 
     total = df["enroll_total"].astype("Float64")
     df["student_teacher_ratio"] = total / df["teachers_fte"].where(df["teachers_fte"] > 0)
@@ -214,12 +243,12 @@ def add_school_measures(df):
     return df
 
 
-def window_classes(df):
+def window_classes(df, window=WINDOW):
     """Classes each treated school's estimation window must contain.
 
-    Event time WINDOW (e = -4 ... +1; to e = 0 when only one post class
-    exists), limited to classes with a denominator (FSA from 2015; CCD grade 12
-    through the newest CCD year) and to covered classes, skipping a
+    Event time `window` (default WINDOW, e = -4 ... +1; to e = 0 when only one
+    post class exists), limited to classes with a denominator (FSA from 2015;
+    CCD grade 12 through the newest CCD year) and to covered classes, skipping a
     partial-rollout class.
     """
     first_denominator = int(df.loc[df["denominator"].notna(), "class_year"].min())
@@ -227,7 +256,7 @@ def window_classes(df):
     school = df.drop_duplicates("school_id").set_index("school_id")
     school = school[school["treated"]]
     out = {}
-    lo, hi = WINDOW
+    lo, hi = window
     for sid, r in school.iterrows():
         first = int(r["first_covered_class"])
         upper = 0 if r["n_post_classes"] == 1 else hi
@@ -261,24 +290,28 @@ def add_flags(df):
         lambda s: s.dropna().isin(["regular", "career_technical"]).all() and s.notna().any())
     is_virtual = df["virtual"].fillna("").str.strip().str.lower().isin(VIRTUAL)
     df["f_not_virtual"] = ~is_virtual.groupby(df["school_id"]).transform("any")
-    # Deneault drops schools whose 9th-grade cohort is ever 0 or missing; CCD
-    # grade 9 starts in 2014-15, so only cohorts from the class of 2018 exist.
+    # Deneault drops schools whose 9th-grade cohort is ever 0 or missing; here
+    # only 0 drops a school (cohorts exist from the class of 2015 on).
     has9 = df["cohort9"].notna()
     df["f_cohort9_positive"] = ~(has9 & (df["cohort9"] <= 0)).groupby(df["school_id"]).transform("any")
     r = df["student_teacher_ratio"]
     df["f_ratio_ok"] = (~(r < 5).groupby(df["school_id"]).transform("any")) & \
         (r.groupby(df["school_id"]).transform("min").fillna(0) <= 100)
     df["f_dose_ok"] = df["pre_fcr"].notna()
+    df["f_dose_clean_ok"] = df["pre_fcr_clean"].notna()
 
-    classes = df["school_id"].map(window_classes(df))
-    df["in_window"] = [isinstance(c, list) and y in c for c, y in zip(classes, df["class_year"])]
-    need = classes.map(lambda c: len(c) if isinstance(c, list) else 0)
-    have = (df["in_window"] & df["fcr"].notna()).groupby(df["school_id"]).transform("sum")
-    df["window_classes_needed"] = need
-    # Data-quality screen (DECISIONS 2026-11-02): window classes whose enrollment cannot
-    # describe a graduating class (years outside the window, e.g. a phase-out, do not count).
-    df["f_senior_share_ok"] = ~(senior_heavy(df) & df["in_window"]).groupby(df["school_id"]).transform("any")
-    df["f_balanced"] = (need > 0) & (have == need)
+    heavy = senior_heavy(df)
+    for sfx, window in WINDOWS.items():   # Deneault's window (no suffix) and the common window
+        classes = df["school_id"].map(window_classes(df, window))
+        inw = pd.Series([isinstance(c, list) and y in c for c, y in zip(classes, df["class_year"])], index=df.index)
+        need = classes.map(lambda c: len(c) if isinstance(c, list) else 0)
+        have = (inw & df["fcr"].notna()).groupby(df["school_id"]).transform("sum")
+        df["in_window" + sfx] = inw
+        df["window_classes_needed" + sfx] = need
+        # Data-quality screen (DECISIONS 2026-11-02): window classes whose enrollment cannot
+        # describe a graduating class (years outside the window, e.g. a phase-out, do not count).
+        df["f_senior_share_ok" + sfx] = ~(heavy & inw).groupby(df["school_id"]).transform("any")
+        df["f_balanced" + sfx] = (need > 0) & (have == need)
     return df
 
 

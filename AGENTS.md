@@ -25,6 +25,7 @@ tests/            pytest tests
 - Read "docs/project-design.md" and "docs/state-data-requirements.md" for project context
 - Run everything from the repository root with `uv run --locked`.
 - Add packages only with `uv add PACKAGE`; never edit `uv.lock` by hand or use `pip install`.
+- R packages are managed by renv: add one with `renv::install("PACKAGE")`, then `renv::snapshot()`; never edit `renv.lock` by hand or call `install.packages()` from project scripts. Prefer base R where it is enough.
 - Paths come from `code/config.py` (`ROOT`, `RAW`, `DERIVED`, `OUTPUT`). No absolute or machine-specific paths.
 - Never edit, move, or delete anything in `data/raw/`.
 - All transformations live in scripts. No manual edits to data or generated output.

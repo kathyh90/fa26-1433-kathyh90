@@ -15,7 +15,9 @@ Sample (DECISIONS 2026-11-01): the first-stage sample, limited to the window
 classes in which the state has outcome data (Texas starts at class 2019;
 California ends at 2023 and Indiana at 2024), keeping schools with the outcome
 in every one of those classes. A state needs a pre and a post class left;
-Oklahoma, New York, and New Jersey have no post-period outcome yet.
+Oklahoma, New York, and New Jersey have no post-period outcome yet. The
+common_window spec (step 6) uses e = -3 ... 0 in every state, the input to the
+cross-state pooling.
 
 For comparison, the first stage is re-estimated on the same sample (fs_beta);
 rf_fs_ratio = beta / fs_beta is the implied effect on enrollment per unit of
@@ -37,11 +39,16 @@ classes (New York, Oklahoma) are skipped; New Jersey (4-year cohort graduates
 from its graduation-rate files) has the first stage but no reduced form until
 its class-2025 outcome is released. graduate_denominator_check.csv
 compares the graduate count with CCD grade-12 enrollment by state and class, to
-check that each state's count is consistent over time.
+check that each state's count is consistent over time. graduate_ratio_dose_test.csv
+asks whether the mandate changed graduation by dose: the main specification
+with y = graduates / CCD grade-12 enrollment (`graduate_ratio_test`), also with
+schools whose ratio ever leaves 0.5-1.5 dropped (`main_trimmed`); beta near 0
+means the graduate count does not respond to the mandate, so it is a valid
+denominator.
 
 Writes data/derived/reduced_form_panel.parquet (panel + outcome columns) and
-output/tables/reduced_form_by_state.csv, first_stage_grad_by_state.csv, and
-graduate_denominator_check.csv.
+output/tables/reduced_form_by_state.csv, first_stage_grad_by_state.csv,
+graduate_denominator_check.csv, and graduate_ratio_dose_test.csv.
 
 Usage (from the repository root):
     uv run --locked python code/08_reduced_form.py
@@ -58,6 +65,7 @@ PANEL_OUT = DERIVED / "reduced_form_panel.parquet"
 OUT = OUTPUT / "tables" / "reduced_form_by_state.csv"
 OUT_FS_GRAD = OUTPUT / "tables" / "first_stage_grad_by_state.csv"
 OUT_GRAD_CHECK = OUTPUT / "tables" / "graduate_denominator_check.csv"
+OUT_GRAD_TEST = OUTPUT / "tables" / "graduate_ratio_dose_test.csv"
 OUTCOME_COLUMNS = {"window": "outcome_window", "pct_enrolled": "pct_enrolled", "graduates": "outcome_graduates",
                    "penroll": "penroll", "link": "outcome_link"}
 
@@ -109,7 +117,7 @@ def prepare(df):
     """Add the enrollment controls (per 1,000 and squared) and cast analysis columns to float."""
     df["enroll_k"] = df["enroll_total"].astype(float) / 1000
     df["enroll_k_sq"] = df["enroll_k"] ** 2
-    for c in ["fcr", "dose", "weight", "enroll", "penroll", "share_frl"] + fs.BASE_CONTROLS:
+    for c in ["fcr", "dose", "dose_clean", "pre_fcr_clean", "weight", "enroll", "penroll", "share_frl"] + fs.BASE_CONTROLS:
         df[c] = df[c].astype(float)
     return df
 
@@ -117,11 +125,9 @@ def prepare(df):
 def state_sample(df, st, spec):
     """One state's first-stage sample for a spec and its reduced-form sample (None
     if no pre and post outcome classes); returns (base, sample, controls, y)."""
-    screens, controls = fs.SPECS[spec]
-    if spec == "main" and st in fs.NO_FRL_STATES:
-        controls = fs.BASE_CONTROLS
+    screens, controls = fs.SPECS[spec][0], fs.spec_controls(spec, st)
     y = "penroll" if spec == "deneault" and st == "LA" else "enroll"
-    base = fs.sample(df[df["state"] == st], screens, controls)
+    base = fs.sample(fs.spec_panel(df[df["state"] == st], spec), screens, controls)
     return base, (outcome_sample(base, y) if len(base) else None), controls, y
 
 
@@ -181,6 +187,37 @@ def first_stage_grad(df, g):
     return pd.DataFrame(rows)
 
 
+def graduate_ratio_test(df):
+    """Does the graduate count respond to the mandate by dose? For each state, the
+    main specification (baseline dose, controls, weights, FE, clustering) with
+    y = grad_ratio = outcome_graduates / enroll_g12, on the main first-stage
+    sample limited to window classes with graduate counts and schools with a count
+    in each (outcome_sample). beta < 0: high-dose schools graduate fewer seniors
+    after the mandate, which would raise a graduate-denominator FCR mechanically."""
+    d0 = df.assign(grad_ratio=(df["outcome_graduates"].astype(float)
+                               / df["enroll_g12"].astype(float).where(df["enroll_g12"] > 0)))
+    rows = []
+    for st in [s for s in STUDY_STATES if s not in fs.EXCLUDE_STATES]:
+        base, _, controls, _ = state_sample(d0, st, "main")
+        d = outcome_sample(base, "grad_ratio") if len(base) else None
+        if d is None:
+            print(f"  {st} graduate-ratio test: no graduate counts for a pre and a post class; skipped")
+            continue
+        # trimmed: drop schools with any ratio outside 0.5-1.5, where the two counts
+        # disagree (e.g. NJ: one row at 53 from a near-zero grade-12 count)
+        ok = d["grad_ratio"].between(0.5, 1.5).groupby(d["school_id"]).transform("all")
+        for spec, s in [("main", d), ("main_trimmed", d[ok])]:
+            r = fs.estimate(s, controls, y="grad_ratio")
+            print(f"  {st} graduate-ratio test ({spec}): {base['school_id'].nunique():,} first-stage schools -> "
+                  f"{r['n_schools']:,} with graduate counts in every class {r['classes']}"
+                  + (f" (trim drops {d['school_id'].nunique() - r['n_schools']} with a ratio outside 0.5-1.5)"
+                     if spec == "main_trimmed" else ""))
+            rows.append({"state": st, "spec": spec, "outcome": "grad_ratio",
+                         **{k: r[k] for k in ["beta", "se", "p", "n_obs", "n_schools", "classes"]},
+                         "mean_ratio_pre": r["mean_grad_ratio_pre"], "mean_dose": r["mean_dose"]})
+    return pd.DataFrame(rows)
+
+
 fs = first_stage_module()
 
 
@@ -195,12 +232,17 @@ def main():
     print(check.pivot(index="class_year", columns="state", values="ratio").round(3).to_string())
     print(f"Graduate-denominator fcr: {g['fcr'].notna().sum():,} rows; capped at 1: {int(g['fcr_capped'].sum()):,}")
 
+    grad_test = graduate_ratio_test(df)
+    grad_test.to_csv(OUT_GRAD_TEST, index=False)
+    print("\nGraduates / CCD grade 12 on dose x post (main spec): does graduation respond to the mandate?")
+    print(grad_test.round(4).to_string(index=False))
+
     fs_grad = first_stage_grad(df, g)
     fs_grad.to_csv(OUT_FS_GRAD, index=False)
 
     rows = []
     for st in [s for s in STUDY_STATES if s not in fs.EXCLUDE_STATES]:
-        for spec in [*fs.SPECS, "grad_denom"]:
+        for spec in [sp for sp in [*fs.SPECS, "grad_denom"] if fs.runs(df[df["state"] == st], sp)]:
             # grad_denom = main spec on the panel with the graduate denominator
             base, d, controls, y = grad_sample(df, g, st) if spec == "grad_denom" else state_sample(df, st, spec)
             n_fs = base["school_id"].nunique()

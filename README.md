@@ -1,6 +1,7 @@
-# Research project title
+# State-specific FAFSA Completion Requirements on FAFSA Completion and College-Going Rates
 
-Replace this text with a one-sentence description of the research question.
+How does a FAFSA graduation requirement affect FAFSA completion and college-going rates within each individual state, and how does aggregating the results between states impact the consistency of the FAFSA requirement effect? How do different implementation strategies or heterogeneity between states explain any difference in the FAFSA graduation requirement’s impact?
+
 
 ## Project Context
 Here is a Google document link to my outline, which is currently being revised: https://docs.google.com/document/d/1dhS8TVZodqTQsj7gL6OkA8KXnRc9jgbaPBSRS1I5YiI/edit?usp=sharing
@@ -16,6 +17,18 @@ uv sync --locked
 ```
 
 Run every command from the repository root with `uv run --locked`. Shared paths are defined in `code/config.py`.
+
+### R
+
+The pooling steps use R (developed on 4.5.2). R packages are managed by [renv](https://rstudio.github.io/renv/), the R counterpart of uv: `renv.lock` records exact versions (like `uv.lock`), and packages install into a project library in `renv/library/` (like `.venv/`, not in Git). `.Rprofile` activates it whenever R starts in the repository root, and `.renvignore` keeps renv from scanning data, outputs, and reference files. Set it up once from the repository root:
+
+```bash
+Rscript -e 'renv::restore()'
+```
+
+renv installs itself the first time. Only the optional baggr check needs packages: `code/12_aggregation.R` (exact pooling) and `code/14_pooling_report.R` (summary) use base R only and run without the restore. Run R scripts from the repository root, e.g. `Rscript code/12_aggregation.R`.
+
+`code/13_baggr_check.R` (optional, about 1.5 minutes) refits the pooling model with [baggr](https://github.com/wwiecek/baggr) (Wiecek & Meager), using MCMC through Stan, and checks it against the exact results. CRAN archived baggr on 2026-11-01 ("issues were not corrected in time"). The lockfile pins the last release, 0.8.2, and `renv::restore()` takes it from the CRAN archive and compiles it from source, which needs a C++ compiler (`xcode-select --install` on macOS) and several minutes. The lockfile pins its dependencies too (rstan 2.32.7, StanHeaders 2.39.1.1). `run.sh` skips this step when baggr is not installed. The package's vignettes (rendered HTML) are saved in `docs/references/baggr_0.8.2/`; start with `baggr.html`.
 
 ## Reproducing the project
 
